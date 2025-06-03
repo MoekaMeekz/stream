@@ -8,7 +8,7 @@ const io = new Server(server);
 const mongoose = require("mongoose");
 const User = require("./models/User");
 
-mongoose.connect(processs.env.MONGO_URI, {
+mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
