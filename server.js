@@ -8,7 +8,7 @@ const io = new Server(server);
 const mongoose = require("mongoose");
 const User = require("./models/User");
 
-mongoose.connect("mongodb://localhost:27017/streamapp", {
+mongoose.connect(processs.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
