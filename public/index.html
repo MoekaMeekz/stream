@@ -94,7 +94,7 @@
   </div>
 
   <div id="appDiv" style="display:none;">
-    <video id="localVideo" autoplay muted playsinline></video>
+    <video id="localVideo" autoplay playsinline></video>
     <button onclick="goFullscreen()">Fullscreen</button>
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
@@ -153,12 +153,11 @@
         document.getElementById("appDiv").style.display = "block";
 
         if (canStream) {
-          startWebRTC();
+          startStreamer();
           addChat(`Welcome, ${username}! You can stream now.`);
         } else {
           addChat(`You joined the chat as ${username}. Streaming is only allowed for VanellopeVonSchweetz.`);
-          streamerId = null; // Will be set on signal receive
-          startWebRTC();
+          startViewer();
         }
       } catch (err) {
         console.error(err);
@@ -198,109 +197,108 @@
       }
     }
 
-    function startWebRTC() {
+    // Streamer side setup
+    async function startStreamer() {
       const localVideo = document.getElementById("localVideo");
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        localVideo.srcObject = stream;
+        localVideo.muted = true;
 
-      if (canStream) {
-        navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: true
-        }).then(stream => {
-          localVideo.srcObject = stream;
-          localVideo.muted = true;
+        socket.on("new-viewer", viewerId => {
+          console.log("New viewer connected:", viewerId);
 
-          socket.on("new-viewer", (viewerId) => {
-            const peer = new RTCPeerConnection();
-            stream.getTracks().forEach(track => peer.addTrack(track, stream));
-            peer.onicecandidate = e => {
-              if (e.candidate) {
-                socket.emit("signal", {
-                  to: viewerId,
-                  from: socket.id,
-                  data: { candidate: e.candidate }
-                });
-              }
-            };
+          const peer = new RTCPeerConnection();
 
-            peer.createOffer().then(offer => {
-              peer.setLocalDescription(offer);
+          // Add all tracks to peer
+          stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+          // ICE candidate handler
+          peer.onicecandidate = e => {
+            if (e.candidate) {
               socket.emit("signal", {
                 to: viewerId,
                 from: socket.id,
-                data: { offer }
+                data: { candidate: e.candidate }
               });
-            });
-
-            peers[viewerId] = peer;
-          });
-
-        }).catch(err => {
-          console.error("🚫 Could not capture screen + audio:", err);
-          alert("Screen/audio sharing was denied or failed.");
-        });
-      } else {
-        const remoteStream = new MediaStream();
-        localVideo.srcObject = remoteStream;
-        localVideo.muted = false;
-
-        const peer = new RTCPeerConnection();
-
-        peer.ontrack = (e) => {
-          remoteStream.addTrack(e.track);
-        };
-
-        peer.onicecandidate = e => {
-          if (e.candidate && streamerId) {
-            socket.emit("signal", {
-              to: streamerId,
-              from: socket.id,
-              data: { candidate: e.candidate }
-            });
-          }
-        };
-
-        peers[socket.id] = peer;
-      }
-
-      socket.on("signal", async ({ from, data }) => {
-        if (!peers[from]) {
-          const peer = new RTCPeerConnection();
-
-          peer.ontrack = (e) => {
-            const remoteStream = new MediaStream();
-            remoteStream.addTrack(e.track);
-            document.getElementById("localVideo").srcObject = remoteStream;
-            document.getElementById("localVideo").muted = false;
-          };
-
-          peer.onicecandidate = e => {
-            if (e.candidate) {
-              socket.emit("signal", { to: from, from: socket.id, data: { candidate: e.candidate } });
             }
           };
 
-          peers[from] = peer;
+          // Create offer and send to viewer
+          peer.createOffer()
+            .then(offer => peer.setLocalDescription(offer))
+            .then(() => {
+              socket.emit("signal", {
+                to: viewerId,
+                from: socket.id,
+                data: { offer: peer.localDescription }
+              });
+            });
+
+          peers[viewerId] = peer;
+        });
+      } catch (err) {
+        console.error("Error getting display media:", err);
+        alert("Could not start streaming. Make sure to allow screen and audio capture.");
+      }
+    }
+
+    // Viewer side setup
+    function startViewer() {
+      const localVideo = document.getElementById("localVideo");
+      const remoteStream = new MediaStream();
+      localVideo.srcObject = remoteStream;
+      localVideo.muted = false;
+
+      const peer = new RTCPeerConnection();
+
+      // When tracks arrive, add them to remote stream
+      peer.ontrack = event => {
+        console.log("Track received from streamer:", event.track.kind);
+        remoteStream.addTrack(event.track);
+      };
+
+      // ICE candidate handler
+      peer.onicecandidate = e => {
+        if (e.candidate && streamerId) {
+          socket.emit("signal", {
+            to: streamerId,
+            from: socket.id,
+            data: { candidate: e.candidate }
+          });
+        }
+      };
+
+      peers[socket.id] = peer;
+
+      // Signal handler to receive offer and send answer
+      socket.on("signal", async ({ from, data }) => {
+        if (from !== streamerId && streamerId !== null) return; // ignore signals from others
+
+        if (!streamerId) {
           streamerId = from;
+          console.log("Set streamerId:", streamerId);
         }
 
-        const peer = peers[from];
-
         if (data.offer) {
+          console.log("Received offer from streamer");
           await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
-          socket.emit("signal", { to: from, from: socket.id, data: { answer } });
-        } else if (data.answer) {
-          await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-        } else if (data.candidate) {
-          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-        }
-      });
 
-      socket.on("viewer-disconnected", id => {
-        if (peers[id]) {
-          peers[id].close();
-          delete peers[id];
+          socket.emit("signal", {
+            to: from,
+            from: socket.id,
+            data: { answer: peer.localDescription }
+          });
+        } else if (data.answer) {
+          // viewer won't receive answers, ignore
+        } else if (data.candidate) {
+          try {
+            await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } catch (err) {
+            console.warn("Error adding received ice candidate", err);
+          }
         }
       });
     }
@@ -331,6 +329,13 @@
 
     socket.on("chat message", (msg) => {
       addChat(msg);
+    });
+
+    socket.on("viewer-disconnected", id => {
+      if (peers[id]) {
+        peers[id].close();
+        delete peers[id];
+      }
     });
 
     function addChat(message) {
