@@ -15,7 +15,7 @@ mongoose.connect(process.env.MONGO_URI, {
 
 app.use(express.static("public"));
 
-const allowedStreamer = "VanellopeVonSchweetz";
+const allowedStreamer = "Vanellope";
 
 // Map socket.id => username
 const users = new Map();
