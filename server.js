@@ -29,15 +29,19 @@ io.on("connection", (socket) => {
     username = name;
     users.set(socket.id, username);
     console.log(`${username} connected`);
+
     socket.broadcast.emit("chat message", `${username} joined the chat`);
 
-    // If this user is the allowed streamer, set them as the current streamer and notify others
     if (username === allowedStreamer) {
       currentStreamerId = socket.id;
-      socket.broadcast.emit("streamer-available", currentStreamerId);
+      // Notify everyone streamer is available
+      io.emit("streamer-available", currentStreamerId);
       console.log(`Streamer available: ${currentStreamerId}`);
+
+      // Also notify streamer themselves immediately
+      socket.emit("streamer-available", currentStreamerId);
     } else {
-      // Notify streamer that a new viewer joined (if streamer exists)
+      // Notify streamer a new viewer joined
       if (currentStreamerId) {
         io.to(currentStreamerId).emit("new-viewer", socket.id);
       }
@@ -52,6 +56,8 @@ io.on("connection", (socket) => {
   });
 
   socket.on("signal", ({ to, from, data }) => {
+    // Debug log for signaling messages
+    console.log(`Signal from ${from} to ${to}`, data);
     io.to(to).emit("signal", { from, data });
   });
 
@@ -66,13 +72,11 @@ io.on("connection", (socket) => {
     users.delete(socket.id);
     socket.broadcast.emit("chat message", `${username} left the chat`);
 
-    // If streamer disconnected, clear currentStreamerId and notify others
     if (socket.id === currentStreamerId) {
       currentStreamerId = null;
-      socket.broadcast.emit("streamer-available", null);
+      io.emit("streamer-available", null);
       console.log("Streamer disconnected, clearing streamerId");
     } else {
-      // Notify streamer if viewer disconnected
       if (currentStreamerId) {
         io.to(currentStreamerId).emit("viewer-disconnected", socket.id);
       }
@@ -82,8 +86,11 @@ io.on("connection", (socket) => {
 
 app.post("/api/register", async (req, res) => {
   const { username, email, password } = req.body;
-  const hashed = await bcrypt.hash(password, 10);
+  if (!username || !email || !password) {
+    return res.status(400).json({ error: "Please fill all fields." });
+  }
   try {
+    const hashed = await bcrypt.hash(password, 10);
     const user = new User({ username, email, password: hashed });
     await user.save();
     res.json({ success: true });
@@ -94,6 +101,9 @@ app.post("/api/register", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: "Please enter email and password." });
+  }
   const user = await User.findOne({ email });
   if (!user || !(await bcrypt.compare(password, user.password))) {
     return res.status(401).json({ error: "Invalid email or password." });
