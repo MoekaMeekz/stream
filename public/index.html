@@ -136,7 +136,6 @@
         });
 
         const data = await res.json();
-        console.log('Login Response:', data);  // Debugging login response
 
         if (!res.ok) {
           alert(data.error || "Login failed");
@@ -154,7 +153,7 @@
         if (canStream) {
           startWebRTC();
           addChat(`Welcome, ${username}! You can stream now.`);
-          document.getElementById("changeStreamBtn").style.display = "inline-block"; // Show change stream button
+          document.getElementById("changeStreamBtn").style.display = "inline-block";
         } else {
           addChat(`You joined the chat as ${username}. Streaming is only allowed for VanellopeVonSchweetz.`);
           streamerId = null;
@@ -307,15 +306,14 @@
       if (video.requestFullscreen) {
         video.requestFullscreen();
       } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen(); // Safari
+        video.webkitRequestFullscreen();
       } else if (video.msRequestFullscreen) {
-        video.msRequestFullscreen(); // IE11
+        video.msRequestFullscreen();
       }
     }
 
     function toggleDarkMode() {
       document.body.classList.toggle("dark-mode");
-
       if (document.body.classList.contains("dark-mode")) {
         localStorage.setItem('darkMode', 'enabled');
       } else {
@@ -327,9 +325,7 @@
       const msgInput = document.getElementById("msgInput");
       const msg = msgInput.value.trim();
       if (!msg) return;
-
-      socket.emit("chat message", { username, msg });
-
+      socket.emit("chat message", msg);
       msgInput.value = "";
     }
 
