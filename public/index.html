@@ -279,9 +279,9 @@
       if (video.requestFullscreen) {
         video.requestFullscreen();
       } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen(); // Safari
+        video.webkitRequestFullscreen();
       } else if (video.msRequestFullscreen) {
-        video.msRequestFullscreen(); // IE11
+        video.msRequestFullscreen();
       }
     }
 
@@ -294,18 +294,15 @@
       const msg = msgInput.value.trim();
       if (!msg) return;
 
-      // Send the raw message and the username as part of the data
-      socket.emit("chat message", { username, msg });
-      
+      socket.emit("chat message", { username, msg }); // Sending both username and message
+
       msgInput.value = "";
     }
 
     socket.on("chat message", (data) => {
       const chat = document.getElementById("chat");
       const div = document.createElement("div");
-
-      // Prefix the message with the username when displaying it
-      div.textContent = `${data.username}: ${data.msg}`;
+      div.textContent = `${data.username}: ${data.msg}`; // Properly accessing username and msg
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     });
@@ -328,12 +325,23 @@
       document.getElementById("loginDiv").style.display = "block";
     }
 
+    function changeStream() {
+      navigator.mediaDevices.getDisplayMedia({
+        video: { mediaSource: 'window' }
+      }).then(stream => {
+        document.getElementById("localVideo").srcObject = stream;
+      }).catch(err => {
+        alert("Failed to change stream: " + err.message);
+      });
+    }
+
     window.login = login;
     window.sendMsg = sendMsg;
     window.goFullscreen = goFullscreen;
     window.toggleDarkMode = toggleDarkMode;
     window.showRegister = showRegister;
     window.showLogin = showLogin;
+    window.changeStream = changeStream;
   </script>
 </body>
 </html>
