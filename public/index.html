@@ -152,11 +152,6 @@
         document.getElementById("registerDiv").style.display = "none";
         document.getElementById("appDiv").style.display = "block";
 
-        // 👉 Fullscreen trigger for mobile on login
-        if (/Mobi|Android/i.test(navigator.userAgent)) {
-          setTimeout(() => enterFullscreen(), 500);
-        }
-
         if (canStream) {
           document.getElementById("changeStreamBtn").style.display = "inline-block";
           startStreamer();
@@ -219,12 +214,6 @@
         video.srcObject = localStream;
         video.muted = true;
         await video.play();
-
-        // 👉 Try fullscreen again on mobile
-        if (/Mobi|Android/i.test(navigator.userAgent)) {
-          setTimeout(() => enterFullscreen(), 500);
-        }
-
       } catch (err) {
         console.error("Error getting stream:", err);
         alert("Failed to access stream.");
@@ -267,7 +256,7 @@
     }
 
     function enterFullscreen() {
-      const el = document.getElementById("localVideo"); // Or document.documentElement
+      const el = document.getElementById("localVideo");
       if (el.requestFullscreen) el.requestFullscreen();
       else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
       else if (el.msRequestFullscreen) el.msRequestFullscreen();
@@ -338,6 +327,23 @@
       }
     });
 
+    // Trigger fullscreen on iOS only in response to user interaction (tap/click)
+    function maybeEnterFullscreen() {
+      if (/Mobi|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+        const el = document.getElementById("localVideo");
+        if (el.requestFullscreen) el.requestFullscreen();
+        else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      }
+      // Remove listeners after first fullscreen attempt
+      document.getElementById("loginDiv").removeEventListener("click", maybeEnterFullscreen);
+      document.getElementById("registerDiv").removeEventListener("click", maybeEnterFullscreen);
+    }
+
+    // Attach listeners to trigger fullscreen on iOS upon user tap
+    document.getElementById("loginDiv").addEventListener("click", maybeEnterFullscreen);
+    document.getElementById("registerDiv").addEventListener("click", maybeEnterFullscreen);
+
+    // Expose functions globally for buttons and links
     window.login = login;
     window.register = register;
     window.showRegister = showRegister;
@@ -346,6 +352,7 @@
     window.goFullscreen = goFullscreen;
     window.toggleDarkMode = toggleDarkMode;
     window.changeStream = changeStream;
+
   </script>
 </body>
 </html>
