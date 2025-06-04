@@ -109,7 +109,6 @@
     let canStream = false;
     let streamerId = null;
     const peers = {};
-
     const iceConfig = {
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
@@ -152,6 +151,11 @@
         document.getElementById("loginDiv").style.display = "none";
         document.getElementById("registerDiv").style.display = "none";
         document.getElementById("appDiv").style.display = "block";
+
+        // 👉 Fullscreen trigger for mobile on login
+        if (/Mobi|Android/i.test(navigator.userAgent)) {
+          setTimeout(() => enterFullscreen(), 500);
+        }
 
         if (canStream) {
           document.getElementById("changeStreamBtn").style.display = "inline-block";
@@ -214,9 +218,13 @@
         const video = document.getElementById("localVideo");
         video.srcObject = localStream;
         video.muted = true;
+        await video.play();
+
+        // 👉 Try fullscreen again on mobile
         if (/Mobi|Android/i.test(navigator.userAgent)) {
-          video.play().then(() => enterFullscreen()).catch(() => {});
+          setTimeout(() => enterFullscreen(), 500);
         }
+
       } catch (err) {
         console.error("Error getting stream:", err);
         alert("Failed to access stream.");
@@ -259,10 +267,11 @@
     }
 
     function enterFullscreen() {
-      const video = document.getElementById("localVideo");
-      if (video.requestFullscreen) video.requestFullscreen();
-      else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
-      else if (video.msRequestFullscreen) video.msRequestFullscreen();
+      const el = document.getElementById("localVideo"); // Or document.documentElement
+      if (el.requestFullscreen) el.requestFullscreen();
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if (el.msRequestFullscreen) el.msRequestFullscreen();
+      else if (el.mozRequestFullScreen) el.mozRequestFullScreen();
     }
 
     function toggleDarkMode() {
