@@ -95,8 +95,14 @@
 
   <div id="appDiv" style="display:none;">
     <video id="localVideo" autoplay playsinline></video>
-    <button id="changeStreamBtn" style="display:none;">Change Stream Source</button>
-    <button onclick="goFullscreen()">Fullscreen</button>
+    <div id="streamControls" style="margin-bottom: 10px;">
+      <!-- Buttons for controlling streaming start -->
+      <button id="startStreamBtn" style="display:none;">Start Streaming</button>
+      <button id="startViewBtn" style="display:none;">Start Viewing</button>
+      <button onclick="goFullscreen()">Fullscreen</button>
+      <button id="changeSourceBtn" style="display:none;">Change Stream Source</button>
+    </div>
+
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
     <button onclick="sendMsg()">Send</button>
@@ -109,6 +115,8 @@
     let canStream = false;
     let streamerId = null;
     const peers = {};
+    let currentStream = null;
+    let streamingSource = "screen"; // or "window" for stream source
 
     const iceConfig = {
       iceServers: [
@@ -117,7 +125,7 @@
       ]
     };
 
-    // Utility to detect mobile devices
+    // Helpers
     function isMobile() {
       return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
     }
@@ -158,21 +166,14 @@
         document.getElementById("registerDiv").style.display = "none";
         document.getElementById("appDiv").style.display = "block";
 
-        // Show the 'Change Stream Source' button only for VanellopeVonSchweetz
-        const changeBtn = document.getElementById("changeStreamBtn");
-        if (username === "VanellopeVonSchweetz") {
-          changeBtn.style.display = "inline-block";
-          changeBtn.onclick = () => startStreamer();
-        } else {
-          changeBtn.style.display = "none";
-        }
-
+        // Show buttons according to role
         if (canStream) {
-          startStreamer();
-          addChat(`Welcome, ${username}! You can stream now.`);
+          document.getElementById("startStreamBtn").style.display = "inline-block";
+          document.getElementById("changeSourceBtn").style.display = "inline-block";
+          addChat(`Welcome, ${username}! You can stream now. Please tap "Start Streaming".`);
         } else {
+          document.getElementById("startViewBtn").style.display = "inline-block";
           addChat(`You joined the chat as ${username}. Streaming is only allowed for VanellopeVonSchweetz.`);
-          startViewer();
         }
       } catch (err) {
         console.error(err);
@@ -207,52 +208,73 @@
       }
     }
 
-    async function getStream(constraints) {
+    async function getStream(sourceType = "screen") {
       try {
+        let constraints = {
+          video: true,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            sampleRate: 48000,
+            channelCount: 2,
+            autoGainControl: false
+          }
+        };
+
+        // On desktop browsers: can request "window" capture as well
+        if (sourceType === "window") {
+          // Note: getDisplayMedia itself doesn't let you specify 'window' or 'screen' exactly.
+          // The browser's picker UI lets user select window or screen.
+          // So sourceType mainly used for your UI tracking.
+          // We'll just call getDisplayMedia normally.
+        }
+
         const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
         return stream;
       } catch (err) {
-        console.error("Error getting display media:", err);
-        alert("Could not start streaming. Make sure to allow screen and audio capture.");
+        console.error("Error getting media stream:", err);
+        alert("Failed to get media stream. Make sure to allow permissions.");
         return null;
       }
     }
 
     async function startStreamer() {
+      if (currentStream) {
+        stopStream(currentStream);
+        currentStream = null;
+      }
       const localVideo = document.getElementById("localVideo");
-      const constraints = {
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          sampleRate: 48000,
-          channelCount: 2,
-          autoGainControl: false
-        }
-      };
 
-      const stream = await getStream(constraints);
+      const stream = await getStream(streamingSource);
       if (!stream) return;
 
+      currentStream = stream;
       localVideo.srcObject = stream;
-      localVideo.muted = true;
+      localVideo.muted = true; // mute local playback to prevent echo
 
-      // Auto fullscreen on mobile when video starts playing
-      localVideo.addEventListener('play', () => {
-        if (isMobile()) {
-          if (localVideo.requestFullscreen) {
-            localVideo.requestFullscreen().catch(() => {
-              console.log("Fullscreen request rejected or unsupported on this device.");
-            });
-          } else if (localVideo.webkitRequestFullscreen) {
-            localVideo.webkitRequestFullscreen();
-          } else if (localVideo.msRequestFullscreen) {
-            localVideo.msRequestFullscreen();
-          }
+      try {
+        await localVideo.play();
+      } catch (err) {
+        console.warn("Playback prevented:", err);
+      }
+
+      if (isMobile()) {
+        try {
+          if (localVideo.requestFullscreen) await localVideo.requestFullscreen();
+          else if (localVideo.webkitRequestFullscreen) await localVideo.webkitRequestFullscreen();
+          else if (localVideo.msRequestFullscreen) await localVideo.msRequestFullscreen();
+        } catch (fsErr) {
+          console.warn("Fullscreen request failed:", fsErr);
         }
-      }, { once: true });
+      }
 
-      socket.off("new-viewer"); // Remove old listener if any
+      // Clean up any previous peers
+      for (const id in peers) {
+        peers[id].close();
+        delete peers[id];
+      }
+
+      socket.off("new-viewer");
       socket.on("new-viewer", viewerId => {
         console.log("[streamer] New viewer:", viewerId);
         const peer = new RTCPeerConnection(iceConfig);
@@ -280,28 +302,42 @@
 
         peers[viewerId] = peer;
       });
+
+      addChat(`Streaming started (${streamingSource})`);
+      document.getElementById("startStreamBtn").style.display = "none";
     }
 
-    function startViewer() {
+    function stopStream(stream) {
+      if (!stream) return;
+      stream.getTracks().forEach(track => track.stop());
+    }
+
+    async function startViewer() {
+      if (currentStream) {
+        stopStream(currentStream);
+        currentStream = null;
+      }
+
       const localVideo = document.getElementById("localVideo");
       const remoteStream = new MediaStream();
       localVideo.srcObject = remoteStream;
       localVideo.muted = false;
 
-      // Auto fullscreen on mobile when video starts playing
-      localVideo.addEventListener('play', () => {
-        if (isMobile()) {
-          if (localVideo.requestFullscreen) {
-            localVideo.requestFullscreen().catch(() => {
-              console.log("Fullscreen request rejected or unsupported on this device.");
-            });
-          } else if (localVideo.webkitRequestFullscreen) {
-            localVideo.webkitRequestFullscreen();
-          } else if (localVideo.msRequestFullscreen) {
-            localVideo.msRequestFullscreen();
-          }
+      try {
+        await localVideo.play();
+      } catch (err) {
+        console.warn("Playback prevented on viewer:", err);
+      }
+
+      if (isMobile()) {
+        try {
+          if (localVideo.requestFullscreen) await localVideo.requestFullscreen();
+          else if (localVideo.webkitRequestFullscreen) await localVideo.webkitRequestFullscreen();
+          else if (localVideo.msRequestFullscreen) await localVideo.msRequestFullscreen();
+        } catch (fsErr) {
+          console.warn("Fullscreen request failed:", fsErr);
         }
-      }, { once: true });
+      }
 
       const peer = new RTCPeerConnection(iceConfig);
 
@@ -320,7 +356,25 @@
       };
 
       peers[socket.id] = peer;
+
+      document.getElementById("startViewBtn").style.display = "none";
+      addChat("Started viewing stream.");
     }
+
+    // Button event handlers
+    document.getElementById("startStreamBtn").onclick = startStreamer;
+    document.getElementById("startViewBtn").onclick = startViewer;
+
+    document.getElementById("changeSourceBtn").onclick = () => {
+      if (streamingSource === "screen") {
+        streamingSource = "window";
+        addChat("Switched stream source to Window. Press 'Start Streaming' again.");
+      } else {
+        streamingSource = "screen";
+        addChat("Switched stream source to Screen. Press 'Start Streaming' again.");
+      }
+      document.getElementById("startStreamBtn").style.display = "inline-block";
+    };
 
     socket.on("signal", async ({ from, data }) => {
       if (!canStream) {
@@ -384,47 +438,38 @@
       }
     });
 
-    socket.on("chat-message", ({ user, msg }) => {
-      addChat(`${user}: ${msg}`);
-    });
-
-    function sendMsg() {
-      const input = document.getElementById("msgInput");
-      const msg = input.value.trim();
-      if (!msg) return;
-      socket.emit("chat-message", { user: username, msg });
-      addChat(`You: ${msg}`);
-      input.value = "";
-    }
-
-    function addChat(text) {
-      const chat = document.getElementById("chat");
-      const p = document.createElement("p");
-      p.textContent = text;
-      chat.appendChild(p);
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    // Fullscreen button fallback for desktop
     function goFullscreen() {
       const video = document.getElementById("localVideo");
-      if (video.requestFullscreen) {
-        video.requestFullscreen().catch(() => {
-          console.log("Fullscreen request rejected or unsupported.");
-        });
-      } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen();
-      } else if (video.msRequestFullscreen) {
-        video.msRequestFullscreen();
-      }
+      if (video.requestFullscreen) video.requestFullscreen();
+      else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
+      else if (video.msRequestFullscreen) video.msRequestFullscreen();
     }
 
-    // Dark mode toggle
     function toggleDarkMode() {
       document.body.classList.toggle("dark-mode");
     }
 
-    // Expose functions for buttons
+    function sendMsg() {
+      const msgInput = document.getElementById("msgInput");
+      const msg = msgInput.value.trim();
+      if (!msg) return;
+      socket.emit("chat message", msg);
+      addChat(`You: ${msg}`);
+      msgInput.value = "";
+    }
+
+    socket.on("chat message", msg => {
+      addChat(msg);
+    });
+
+    function addChat(message) {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.textContent = message;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
     window.login = login;
     window.register = register;
     window.showRegister = showRegister;
@@ -435,4 +480,3 @@
   </script>
 </body>
 </html>
-
