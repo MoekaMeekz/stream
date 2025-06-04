@@ -201,9 +201,9 @@
         try {
           const stream = await navigator.mediaDevices.getDisplayMedia({
             video: {
-              width: { exact: 1920 },
-              height: { exact: 1080 },
-              frameRate: { max: 60 }
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              frameRate: { ideal: 60 }
             },
             audio: {
               echoCancellation: false,
@@ -321,11 +321,15 @@
           await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
-          socket.emit("signal", { to: from, from: socket.id, data: { answer: peer.localDescription } });
+          socket.emit("signal", { to: from, from: socket.id, data: { answer } });
         } else if (data.answer) {
           await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
         } else if (data.candidate) {
-          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+          try {
+            await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } catch(e) {
+            console.warn("Error adding ICE candidate", e);
+          }
         }
       });
 
@@ -355,24 +359,29 @@
     function sendMsg() {
       const msgInput = document.getElementById("msgInput");
       const msg = msgInput.value.trim();
-      if (msg) {
-        socket.emit("chat-message", { user: username, message: msg });
-        addChat(`You: ${msg}`);
-        msgInput.value = "";
-      }
+      if (!msg) return;
+      socket.emit("chat message", msg);
+      addChat(`You: ${msg}`);
+      msgInput.value = "";
     }
 
-    function addChat(msg) {
+    socket.on("chat message", (msg) => {
       const chat = document.getElementById("chat");
-      const p = document.createElement("p");
-      p.textContent = msg;
-      chat.appendChild(p);
+      const div = document.createElement("div");
+      div.textContent = msg;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    });
+
+    function addChat(message) {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.textContent = message;
+      chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
     }
 
-    socket.on("chat-message", ({ user, message }) => {
-      addChat(`${user}: ${message}`);
-    });
+    window.sendMsg = sendMsg;
   </script>
 </body>
 </html>
