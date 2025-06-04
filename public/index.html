@@ -95,14 +95,8 @@
 
   <div id="appDiv" style="display:none;">
     <video id="localVideo" autoplay playsinline></video>
-    <div id="streamControls" style="margin-bottom: 10px;">
-      <!-- Buttons for controlling streaming start -->
-      <button id="startStreamBtn" style="display:none;">Start Streaming</button>
-      <button id="startViewBtn" style="display:none;">Start Viewing</button>
-      <button onclick="goFullscreen()">Fullscreen</button>
-      <button id="changeSourceBtn" style="display:none;">Change Stream Source</button>
-    </div>
-
+    <button id="changeStreamBtn" style="display:none;" onclick="changeStream()">Change Stream Source</button>
+    <button onclick="goFullscreen()">Fullscreen</button>
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
     <button onclick="sendMsg()">Send</button>
@@ -115,8 +109,6 @@
     let canStream = false;
     let streamerId = null;
     const peers = {};
-    let currentStream = null;
-    let streamingSource = "screen"; // or "window" for stream source
 
     const iceConfig = {
       iceServers: [
@@ -124,11 +116,6 @@
         { urls: "stun:stun1.l.google.com:19302" },
       ]
     };
-
-    // Helpers
-    function isMobile() {
-      return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
-    }
 
     function showRegister() {
       document.getElementById("loginDiv").style.display = "none";
@@ -166,14 +153,12 @@
         document.getElementById("registerDiv").style.display = "none";
         document.getElementById("appDiv").style.display = "block";
 
-        // Show buttons according to role
         if (canStream) {
-          document.getElementById("startStreamBtn").style.display = "inline-block";
-          document.getElementById("changeSourceBtn").style.display = "inline-block";
-          addChat(`Welcome, ${username}! You can stream now. Please tap "Start Streaming".`);
+          document.getElementById("changeStreamBtn").style.display = "inline-block";
+          startStreamer();
+          addChat(`Welcome, ${username}! You can stream now.`);
         } else {
-          document.getElementById("startViewBtn").style.display = "inline-block";
-          addChat(`You joined the chat as ${username}. Streaming is only allowed for VanellopeVonSchweetz.`);
+          addChat(`You joined the chat as ${username}.`);
         }
       } catch (err) {
         console.error(err);
@@ -208,237 +193,72 @@
       }
     }
 
-    async function getStream(sourceType = "screen") {
+    let localStream = null;
+
+    async function getStream(source = "screen") {
+      if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+      }
       try {
-        let constraints = {
-          video: true,
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            sampleRate: 48000,
-            channelCount: 2,
-            autoGainControl: false
-          }
-        };
-
-        // On desktop browsers: can request "window" capture as well
-        if (sourceType === "window") {
-          // Note: getDisplayMedia itself doesn't let you specify 'window' or 'screen' exactly.
-          // The browser's picker UI lets user select window or screen.
-          // So sourceType mainly used for your UI tracking.
-          // We'll just call getDisplayMedia normally.
+        if (source === "screen") {
+          localStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 }
+          });
+        } else {
+          localStream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 }
+          });
         }
-
-        const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
-        return stream;
+        const video = document.getElementById("localVideo");
+        video.srcObject = localStream;
+        video.muted = true;
+        if (/Mobi|Android/i.test(navigator.userAgent)) {
+          video.play().then(() => enterFullscreen()).catch(() => {});
+        }
       } catch (err) {
-        console.error("Error getting media stream:", err);
-        alert("Failed to get media stream. Make sure to allow permissions.");
-        return null;
+        console.error("Error getting stream:", err);
+        alert("Failed to access stream.");
       }
     }
 
     async function startStreamer() {
-      if (currentStream) {
-        stopStream(currentStream);
-        currentStream = null;
-      }
-      const localVideo = document.getElementById("localVideo");
-
-      const stream = await getStream(streamingSource);
-      if (!stream) return;
-
-      currentStream = stream;
-      localVideo.srcObject = stream;
-      localVideo.muted = true; // mute local playback to prevent echo
-
-      try {
-        await localVideo.play();
-      } catch (err) {
-        console.warn("Playback prevented:", err);
-      }
-
-      if (isMobile()) {
-        try {
-          if (localVideo.requestFullscreen) await localVideo.requestFullscreen();
-          else if (localVideo.webkitRequestFullscreen) await localVideo.webkitRequestFullscreen();
-          else if (localVideo.msRequestFullscreen) await localVideo.msRequestFullscreen();
-        } catch (fsErr) {
-          console.warn("Fullscreen request failed:", fsErr);
-        }
-      }
-
-      // Clean up any previous peers
-      for (const id in peers) {
-        peers[id].close();
-        delete peers[id];
-      }
-
-      socket.off("new-viewer");
+      await getStream();
       socket.on("new-viewer", viewerId => {
-        console.log("[streamer] New viewer:", viewerId);
         const peer = new RTCPeerConnection(iceConfig);
-
-        stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
+        localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
         peer.onicecandidate = e => {
           if (e.candidate) {
-            socket.emit("signal", {
-              to: viewerId,
-              from: socket.id,
-              data: { candidate: e.candidate }
-            });
+            socket.emit("signal", { to: viewerId, from: socket.id, data: { candidate: e.candidate } });
           }
         };
-
-        peer.createOffer().then(offer => peer.setLocalDescription(offer))
+        peer.createOffer()
+          .then(offer => peer.setLocalDescription(offer))
           .then(() => {
-            socket.emit("signal", {
-              to: viewerId,
-              from: socket.id,
-              data: { offer: peer.localDescription }
-            });
+            socket.emit("signal", { to: viewerId, from: socket.id, data: { offer: peer.localDescription } });
           });
-
         peers[viewerId] = peer;
       });
-
-      addChat(`Streaming started (${streamingSource})`);
-      document.getElementById("startStreamBtn").style.display = "none";
     }
 
-    function stopStream(stream) {
-      if (!stream) return;
-      stream.getTracks().forEach(track => track.stop());
+    async function changeStream() {
+      const type = prompt("Enter 'screen' or 'camera' to switch stream:");
+      if (!["screen", "camera"].includes(type)) return;
+      await getStream(type);
+      Object.values(peers).forEach(peer => {
+        localStream.getTracks().forEach(newTrack => {
+          const sender = peer.getSenders().find(s => s.track.kind === newTrack.kind);
+          if (sender) sender.replaceTrack(newTrack);
+        });
+      });
     }
-
-    async function startViewer() {
-      if (currentStream) {
-        stopStream(currentStream);
-        currentStream = null;
-      }
-
-      const localVideo = document.getElementById("localVideo");
-      const remoteStream = new MediaStream();
-      localVideo.srcObject = remoteStream;
-      localVideo.muted = false;
-
-      try {
-        await localVideo.play();
-      } catch (err) {
-        console.warn("Playback prevented on viewer:", err);
-      }
-
-      if (isMobile()) {
-        try {
-          if (localVideo.requestFullscreen) await localVideo.requestFullscreen();
-          else if (localVideo.webkitRequestFullscreen) await localVideo.webkitRequestFullscreen();
-          else if (localVideo.msRequestFullscreen) await localVideo.msRequestFullscreen();
-        } catch (fsErr) {
-          console.warn("Fullscreen request failed:", fsErr);
-        }
-      }
-
-      const peer = new RTCPeerConnection(iceConfig);
-
-      peer.ontrack = event => {
-        remoteStream.addTrack(event.track);
-      };
-
-      peer.onicecandidate = e => {
-        if (e.candidate && streamerId) {
-          socket.emit("signal", {
-            to: streamerId,
-            from: socket.id,
-            data: { candidate: e.candidate }
-          });
-        }
-      };
-
-      peers[socket.id] = peer;
-
-      document.getElementById("startViewBtn").style.display = "none";
-      addChat("Started viewing stream.");
-    }
-
-    // Button event handlers
-    document.getElementById("startStreamBtn").onclick = startStreamer;
-    document.getElementById("startViewBtn").onclick = startViewer;
-
-    document.getElementById("changeSourceBtn").onclick = () => {
-      if (streamingSource === "screen") {
-        streamingSource = "window";
-        addChat("Switched stream source to Window. Press 'Start Streaming' again.");
-      } else {
-        streamingSource = "screen";
-        addChat("Switched stream source to Screen. Press 'Start Streaming' again.");
-      }
-      document.getElementById("startStreamBtn").style.display = "inline-block";
-    };
-
-    socket.on("signal", async ({ from, data }) => {
-      if (!canStream) {
-        if (!streamerId) {
-          streamerId = from;
-        }
-      }
-
-      let peer = peers[from];
-      if (!peer) {
-        peer = new RTCPeerConnection(iceConfig);
-
-        if (!canStream) {
-          const remoteStream = document.getElementById("localVideo").srcObject;
-          peer.ontrack = e => remoteStream.addTrack(e.track);
-          peer.onicecandidate = e => {
-            if (e.candidate && streamerId) {
-              socket.emit("signal", {
-                to: streamerId,
-                from: socket.id,
-                data: { candidate: e.candidate }
-              });
-            }
-          };
-        } else {
-          peer.onicecandidate = e => {
-            if (e.candidate) {
-              socket.emit("signal", {
-                to: from,
-                from: socket.id,
-                data: { candidate: e.candidate }
-              });
-            }
-          };
-        }
-
-        peers[from] = peer;
-      }
-
-      try {
-        if (data.offer) {
-          await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
-          const answer = await peer.createAnswer();
-          await peer.setLocalDescription(answer);
-          socket.emit("signal", { to: from, from: socket.id, data: { answer: peer.localDescription } });
-        } else if (data.answer) {
-          await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-        } else if (data.candidate) {
-          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-        }
-      } catch (err) {
-        console.error("Error handling signal data", err);
-      }
-    });
-
-    socket.on("viewer-disconnected", id => {
-      if (peers[id]) {
-        peers[id].close();
-        delete peers[id];
-        console.log("[peer] Closed connection with", id);
-      }
-    });
 
     function goFullscreen() {
+      enterFullscreen();
+    }
+
+    function enterFullscreen() {
       const video = document.getElementById("localVideo");
       if (video.requestFullscreen) video.requestFullscreen();
       else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
@@ -458,9 +278,7 @@
       msgInput.value = "";
     }
 
-    socket.on("chat message", msg => {
-      addChat(msg);
-    });
+    socket.on("chat message", msg => addChat(msg));
 
     function addChat(message) {
       const chat = document.getElementById("chat");
@@ -470,6 +288,47 @@
       chat.scrollTop = chat.scrollHeight;
     }
 
+    socket.on("signal", async ({ from, data }) => {
+      if (!canStream && !streamerId) {
+        streamerId = from;
+        startViewer();
+      }
+      let peer = peers[from];
+      if (!peer) {
+        peer = new RTCPeerConnection(iceConfig);
+        const remoteStream = new MediaStream();
+        document.getElementById("localVideo").srcObject = remoteStream;
+        peer.ontrack = e => remoteStream.addTrack(e.track);
+        peer.onicecandidate = e => {
+          if (e.candidate) {
+            socket.emit("signal", { to: from, from: socket.id, data: { candidate: e.candidate } });
+          }
+        };
+        peers[from] = peer;
+      }
+      try {
+        if (data.offer) {
+          await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+          const answer = await peer.createAnswer();
+          await peer.setLocalDescription(answer);
+          socket.emit("signal", { to: from, from: socket.id, data: { answer: peer.localDescription } });
+        } else if (data.answer) {
+          await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } else if (data.candidate) {
+          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+      } catch (err) {
+        console.error("Signal error:", err);
+      }
+    });
+
+    socket.on("viewer-disconnected", id => {
+      if (peers[id]) {
+        peers[id].close();
+        delete peers[id];
+      }
+    });
+
     window.login = login;
     window.register = register;
     window.showRegister = showRegister;
@@ -477,6 +336,7 @@
     window.sendMsg = sendMsg;
     window.goFullscreen = goFullscreen;
     window.toggleDarkMode = toggleDarkMode;
+    window.changeStream = changeStream;
   </script>
 </body>
 </html>
