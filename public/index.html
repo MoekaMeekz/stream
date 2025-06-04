@@ -96,8 +96,9 @@
   <div id="appDiv" style="display:none;">
     <video id="localVideo" autoplay playsinline></video>
     <button onclick="goFullscreen()">Fullscreen</button>
-    <!-- Change Stream Source button, initially hidden -->
-    <button id="changeStreamBtn" style="display:none;" onclick="changeStream()">Change Stream Source</button>
+    <!-- Change Stream Source button, only shown to VanellopeVonSchweetz -->
+    <button id="changeSourceBtn" style="display:none" onclick="changeStreamSource()">Change Stream Source</button>
+
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
     <button onclick="sendMsg()">Send</button>
@@ -110,6 +111,7 @@
     let canStream = false;
     let streamerId = null;
     const peers = {};
+    let currentStream = null;
 
     const iceConfig = {
       iceServers: [
@@ -155,11 +157,11 @@
         document.getElementById("appDiv").style.display = "block";
 
         if (canStream) {
+          if (username === "VanellopeVonSchweetz") {
+            document.getElementById("changeSourceBtn").style.display = "inline-block";
+          }
           startStreamer();
           addChat(`Welcome, ${username}! You can stream now.`);
-          if (username === "VanellopeVonSchweetz") {
-            document.getElementById("changeStreamBtn").style.display = "inline-block";
-          }
         } else {
           addChat(`You joined the chat as ${username}. Streaming is only allowed for VanellopeVonSchweetz.`);
           startViewer();
@@ -197,16 +199,14 @@
       }
     }
 
-    let currentStream = null;
-
     async function startStreamer() {
       const localVideo = document.getElementById("localVideo");
       try {
         currentStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
+            echoCancellation: false,
+            noiseSuppression: false,
             sampleRate: 48000
           }
         });
@@ -246,46 +246,56 @@
       }
     }
 
-    async function changeStream() {
-      const localVideo = document.getElementById("localVideo");
+    // Function to change streaming source dynamically
+    async function changeStreamSource() {
+      if (!canStream) return;
+
       try {
         const newStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
+            echoCancellation: false,
+            noiseSuppression: false,
             sampleRate: 48000
           }
         });
 
-        // Replace tracks on all peers
+        const localVideo = document.getElementById("localVideo");
+        localVideo.srcObject = newStream;
+
+        // Replace tracks in all peer connections
         for (const peerId in peers) {
           const peer = peers[peerId];
 
-          // Replace video track
-          const senderVideo = peer.getSenders().find(s => s.track.kind === "video");
-          if (senderVideo) {
-            const newVideoTrack = newStream.getVideoTracks()[0];
-            senderVideo.replaceTrack(newVideoTrack);
-          }
+          // Remove old tracks
+          currentStream.getTracks().forEach(track => {
+            const sender = peer.getSenders().find(s => s.track === track);
+            if (sender) peer.removeTrack(sender);
+          });
 
-          // Replace audio track
-          const senderAudio = peer.getSenders().find(s => s.track.kind === "audio");
-          if (senderAudio) {
-            const newAudioTrack = newStream.getAudioTracks()[0];
-            senderAudio.replaceTrack(newAudioTrack);
-          }
+          // Add new tracks
+          newStream.getTracks().forEach(track => {
+            peer.addTrack(track, newStream);
+          });
+
+          // Create a new offer to renegotiate
+          const offer = await peer.createOffer();
+          await peer.setLocalDescription(offer);
+
+          socket.emit("signal", {
+            to: peerId,
+            from: socket.id,
+            data: { offer: peer.localDescription }
+          });
         }
 
-        // Stop old tracks
-        if (currentStream) {
-          currentStream.getTracks().forEach(track => track.stop());
-        }
+        // Stop old tracks and update current stream
+        currentStream.getTracks().forEach(track => track.stop());
         currentStream = newStream;
-        localVideo.srcObject = currentStream;
+
       } catch (err) {
-        console.error("Error changing stream:", err);
-        alert("Could not change stream. Make sure to allow screen and audio capture.");
+        console.error("Error changing stream source:", err);
+        alert("Could not change stream source. Make sure to allow screen and audio capture.");
       }
     }
 
@@ -415,7 +425,7 @@
     window.sendMsg = sendMsg;
     window.goFullscreen = goFullscreen;
     window.toggleDarkMode = toggleDarkMode;
-    window.changeStream = changeStream;
+    window.changeStreamSource = changeStreamSource;
   </script>
 </body>
 </html>
