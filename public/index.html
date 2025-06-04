@@ -70,17 +70,6 @@
     body.dark-mode a {
       color: #90caf9;
     }
-
-    /* Fullscreen fallback style */
-    #localVideo.fullscreen-fallback {
-      position: fixed !important;
-      top: 0 !important;
-      left: 0 !important;
-      width: 100vw !important;
-      height: 100vh !important;
-      z-index: 9999 !important;
-      background: black;
-    }
   </style>
 </head>
 <body>
@@ -106,8 +95,8 @@
 
   <div id="appDiv" style="display:none;">
     <video id="localVideo" autoplay playsinline></video>
+    <button id="changeStreamBtn" style="display:none;">Change Stream Source</button>
     <button onclick="goFullscreen()">Fullscreen</button>
-    <button onclick="exitFullscreenFallback()">Exit Fullscreen</button>
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
     <button onclick="sendMsg()">Send</button>
@@ -127,6 +116,11 @@
         { urls: "stun:stun1.l.google.com:19302" },
       ]
     };
+
+    // Utility to detect mobile devices
+    function isMobile() {
+      return /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(navigator.userAgent);
+    }
 
     function showRegister() {
       document.getElementById("loginDiv").style.display = "none";
@@ -163,6 +157,15 @@
         document.getElementById("loginDiv").style.display = "none";
         document.getElementById("registerDiv").style.display = "none";
         document.getElementById("appDiv").style.display = "block";
+
+        // Show the 'Change Stream Source' button only for VanellopeVonSchweetz
+        const changeBtn = document.getElementById("changeStreamBtn");
+        if (username === "VanellopeVonSchweetz") {
+          changeBtn.style.display = "inline-block";
+          changeBtn.onclick = () => startStreamer();
+        } else {
+          changeBtn.style.display = "none";
+        }
 
         if (canStream) {
           startStreamer();
@@ -204,52 +207,79 @@
       }
     }
 
-    async function startStreamer() {
-      const localVideo = document.getElementById("localVideo");
+    async function getStream(constraints) {
       try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            sampleRate: 48000,
-            channelCount: 2
-          }
-        });
-        localVideo.srcObject = stream;
-        localVideo.muted = true;
-
-        socket.on("new-viewer", viewerId => {
-          console.log("[streamer] New viewer:", viewerId);
-          const peer = new RTCPeerConnection(iceConfig);
-
-          stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-          peer.onicecandidate = e => {
-            if (e.candidate) {
-              socket.emit("signal", {
-                to: viewerId,
-                from: socket.id,
-                data: { candidate: e.candidate }
-              });
-            }
-          };
-
-          peer.createOffer().then(offer => peer.setLocalDescription(offer))
-            .then(() => {
-              socket.emit("signal", {
-                to: viewerId,
-                from: socket.id,
-                data: { offer: peer.localDescription }
-              });
-            });
-
-          peers[viewerId] = peer;
-        });
+        const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+        return stream;
       } catch (err) {
         console.error("Error getting display media:", err);
         alert("Could not start streaming. Make sure to allow screen and audio capture.");
+        return null;
       }
+    }
+
+    async function startStreamer() {
+      const localVideo = document.getElementById("localVideo");
+      const constraints = {
+        video: true,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          sampleRate: 48000,
+          channelCount: 2,
+          autoGainControl: false
+        }
+      };
+
+      const stream = await getStream(constraints);
+      if (!stream) return;
+
+      localVideo.srcObject = stream;
+      localVideo.muted = true;
+
+      // Auto fullscreen on mobile when video starts playing
+      localVideo.addEventListener('play', () => {
+        if (isMobile()) {
+          if (localVideo.requestFullscreen) {
+            localVideo.requestFullscreen().catch(() => {
+              console.log("Fullscreen request rejected or unsupported on this device.");
+            });
+          } else if (localVideo.webkitRequestFullscreen) {
+            localVideo.webkitRequestFullscreen();
+          } else if (localVideo.msRequestFullscreen) {
+            localVideo.msRequestFullscreen();
+          }
+        }
+      }, { once: true });
+
+      socket.off("new-viewer"); // Remove old listener if any
+      socket.on("new-viewer", viewerId => {
+        console.log("[streamer] New viewer:", viewerId);
+        const peer = new RTCPeerConnection(iceConfig);
+
+        stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+        peer.onicecandidate = e => {
+          if (e.candidate) {
+            socket.emit("signal", {
+              to: viewerId,
+              from: socket.id,
+              data: { candidate: e.candidate }
+            });
+          }
+        };
+
+        peer.createOffer().then(offer => peer.setLocalDescription(offer))
+          .then(() => {
+            socket.emit("signal", {
+              to: viewerId,
+              from: socket.id,
+              data: { offer: peer.localDescription }
+            });
+          });
+
+        peers[viewerId] = peer;
+      });
     }
 
     function startViewer() {
@@ -257,6 +287,21 @@
       const remoteStream = new MediaStream();
       localVideo.srcObject = remoteStream;
       localVideo.muted = false;
+
+      // Auto fullscreen on mobile when video starts playing
+      localVideo.addEventListener('play', () => {
+        if (isMobile()) {
+          if (localVideo.requestFullscreen) {
+            localVideo.requestFullscreen().catch(() => {
+              console.log("Fullscreen request rejected or unsupported on this device.");
+            });
+          } else if (localVideo.webkitRequestFullscreen) {
+            localVideo.webkitRequestFullscreen();
+          } else if (localVideo.msRequestFullscreen) {
+            localVideo.msRequestFullscreen();
+          }
+        }
+      }, { once: true });
 
       const peer = new RTCPeerConnection(iceConfig);
 
@@ -331,6 +376,14 @@
       }
     });
 
+    socket.on("viewer-disconnected", id => {
+      if (peers[id]) {
+        peers[id].close();
+        delete peers[id];
+        console.log("[peer] Closed connection with", id);
+      }
+    });
+
     socket.on("chat-message", ({ user, msg }) => {
       addChat(`${user}: ${msg}`);
     });
@@ -352,42 +405,21 @@
       chat.scrollTop = chat.scrollHeight;
     }
 
-    // Fullscreen logic with fallback for mobile
-
+    // Fullscreen button fallback for desktop
     function goFullscreen() {
       const video = document.getElementById("localVideo");
       if (video.requestFullscreen) {
         video.requestFullscreen().catch(() => {
-          // Fallback on failure
-          video.classList.add("fullscreen-fallback");
+          console.log("Fullscreen request rejected or unsupported.");
         });
       } else if (video.webkitRequestFullscreen) {
         video.webkitRequestFullscreen();
       } else if (video.msRequestFullscreen) {
         video.msRequestFullscreen();
-      } else {
-        // No fullscreen API, fallback
-        video.classList.add("fullscreen-fallback");
-      }
-    }
-
-    function exitFullscreenFallback() {
-      const video = document.getElementById("localVideo");
-      if (document.exitFullscreen) {
-        document.exitFullscreen().catch(() => {
-          video.classList.remove("fullscreen-fallback");
-        });
-      } else if (document.webkitExitFullscreen) {
-        document.webkitExitFullscreen();
-      } else if (document.msExitFullscreen) {
-        document.msExitFullscreen();
-      } else {
-        video.classList.remove("fullscreen-fallback");
       }
     }
 
     // Dark mode toggle
-
     function toggleDarkMode() {
       document.body.classList.toggle("dark-mode");
     }
@@ -399,8 +431,8 @@
     window.showLogin = showLogin;
     window.sendMsg = sendMsg;
     window.goFullscreen = goFullscreen;
-    window.exitFullscreenFallback = exitFullscreenFallback;
     window.toggleDarkMode = toggleDarkMode;
   </script>
 </body>
 </html>
+
