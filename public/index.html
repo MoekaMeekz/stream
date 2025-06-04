@@ -1,357 +1,239 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Stream + Chat App</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 700px;
-      margin: 20px auto;
-      transition: background-color 0.3s, color 0.3s;
-    }
-    #loginDiv, #registerDiv, #appDiv {
-      border: 1px solid #ccc;
-      padding: 20px;
-      border-radius: 8px;
-      transition: background-color 0.3s, color 0.3s;
-    }
-    input {
-      display: block;
-      margin: 10px 0;
-      padding: 8px;
-      width: 100%;
-      box-sizing: border-box;
-    }
-    #chat {
-      max-height: 200px;
-      overflow-y: auto;
-      border: 1px solid #ddd;
-      padding: 8px;
-      margin-bottom: 10px;
-      background: #f9f9f9;
-    }
-    video {
-      width: 100%;
-      max-height: 300px;
-      background: black;
-      margin-bottom: 10px;
-    }
-    a {
-      cursor: pointer;
-      color: blue;
-    }
-    button {
-      margin: 5px 0;
-    }
-    body.dark-mode {
-      background-color: #121212;
-      color: #eee;
-    }
-    body.dark-mode #loginDiv,
-    body.dark-mode #registerDiv,
-    body.dark-mode #appDiv {
-      background-color: #1e1e1e;
-      color: #eee;
-      border-color: #444;
-    }
-    body.dark-mode input,
-    body.dark-mode #chat,
-    body.dark-mode video {
-      background-color: #2a2a2a;
-      color: #eee;
-      border-color: #555;
-    }
-    body.dark-mode button {
-      background-color: #333;
-      color: #eee;
-    }
-    body.dark-mode a {
-      color: #90caf9;
-    }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Streaming App</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 700px; margin: 20px auto; }
+  video { width: 100%; background: black; }
+  #chat { height: 150px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin: 10px 0; }
+</style>
 </head>
 <body>
 
-  <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
+<h2>Streaming App</h2>
 
-  <div id="loginDiv">
-    <h2>Login</h2>
-    <input id="emailInput" type="email" placeholder="Email" />
-    <input id="passwordInput" type="password" placeholder="Password" />
-    <button onclick="login()">Login</button>
-    <p>Don't have an account? <a onclick="showRegister()">Register</a></p>
-  </div>
+<div id="loginDiv">
+  <input id="emailInput" type="email" placeholder="Email" />
+  <input id="passwordInput" type="password" placeholder="Password" />
+  <button onclick="login()">Login</button>
+</div>
 
-  <div id="registerDiv" style="display:none;">
-    <h2>Register</h2>
-    <input id="regUsername" placeholder="Username" />
-    <input id="regEmail" type="email" placeholder="Email" />
-    <input id="regPassword" type="password" placeholder="Password" />
-    <button onclick="register()">Register</button>
-    <p>Already have an account? <a onclick="showLogin()">Login</a></p>
-  </div>
+<div id="appDiv" style="display:none;">
+  <video id="video" autoplay playsinline></video>
+  <button id="startStreamBtn" style="display:none;">Start Streaming</button>
 
-  <div id="appDiv" style="display:none;">
-    <video id="localVideo" autoplay playsinline></video>
-    <button id="changeStreamBtn" style="display:none;" onclick="changeStream()">Change Stream Source</button>
-    <button onclick="goFullscreen()">Fullscreen</button>
-    <div id="chat"></div>
-    <input id="msgInput" placeholder="Type message..." />
-    <button onclick="sendMsg()">Send</button>
-  </div>
+  <div id="chat"></div>
+  <input id="msgInput" placeholder="Type message..." />
+  <button onclick="sendMessage()">Send</button>
+</div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script>
-    const socket = io();
-    let username = "";
-    let canStream = false;
-    let streamerId = null;
-    const peers = {};
-    const iceConfig = {
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-      ]
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+
+  let username = null;
+  let canStream = false;
+  let localStream = null;
+  let peers = {}; // For streamer: key = viewer socketId, value = RTCPeerConnection
+  let viewerPeer = null; // For viewer: single peer connection to streamer
+  let currentStreamerId = null;
+
+  const loginDiv = document.getElementById('loginDiv');
+  const appDiv = document.getElementById('appDiv');
+  const videoEl = document.getElementById('video');
+  const chatDiv = document.getElementById('chat');
+  const startStreamBtn = document.getElementById('startStreamBtn');
+
+  // ===== LOGIN =====
+  async function login() {
+    const email = document.getElementById('emailInput').value.trim();
+    const password = document.getElementById('passwordInput').value;
+
+    if (!email || !password) {
+      alert("Please fill in email and password");
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || "Login failed");
+        return;
+      }
+
+      username = data.username;
+      canStream = data.canStream;
+
+      socket.emit('login', username);
+
+      loginDiv.style.display = 'none';
+      appDiv.style.display = 'block';
+
+      addChat(`Welcome ${username}!`);
+
+      if (canStream) {
+        startStreamBtn.style.display = 'inline-block';
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error during login");
+    }
+  }
+
+  // ===== CHAT =====
+  socket.on('chat message', msg => {
+    addChat(msg);
+  });
+
+  function sendMessage() {
+    const input = document.getElementById('msgInput');
+    const msg = input.value.trim();
+    if (!msg) return;
+    socket.emit('chat message', msg);
+    input.value = '';
+  }
+
+  function addChat(msg) {
+    const p = document.createElement('p');
+    p.textContent = msg;
+    chatDiv.appendChild(p);
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+  }
+
+  // ===== STREAMER =====
+  startStreamBtn.onclick = async () => {
+    try {
+      localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      videoEl.srcObject = localStream;
+      videoEl.muted = true; // Mute self to avoid feedback
+      await videoEl.play();
+      addChat('Started streaming. Waiting for viewers...');
+
+      socket.on('new-viewer', handleNewViewer);
+    } catch (err) {
+      console.error('Failed to start stream:', err);
+      alert('Could not start streaming: ' + err.message);
+    }
+  };
+
+  async function handleNewViewer(viewerId) {
+    console.log('New viewer:', viewerId);
+    const peer = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    // Add all tracks from the stream to the peer connection
+    localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
+
+    peer.onicecandidate = e => {
+      if (e.candidate) {
+        socket.emit('signal', { to: viewerId, from: socket.id, data: { candidate: e.candidate } });
+      }
     };
 
-    function showRegister() {
-      document.getElementById("loginDiv").style.display = "none";
-      document.getElementById("registerDiv").style.display = "block";
+    // Create offer and send to viewer
+    try {
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      socket.emit('signal', { to: viewerId, from: socket.id, data: { offer: peer.localDescription } });
+    } catch (err) {
+      console.error('Error creating offer:', err);
     }
-    function showLogin() {
-      document.getElementById("registerDiv").style.display = "none";
-      document.getElementById("loginDiv").style.display = "block";
-    }
 
-    async function login() {
-      const email = document.getElementById("emailInput").value.trim();
-      const password = document.getElementById("passwordInput").value;
-      if (!email || !password) {
-        alert("Please enter email and password.");
-        return;
-      }
-      try {
-        const res = await fetch("/api/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password })
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          alert(data.error || "Login failed");
-          return;
-        }
-        username = data.username;
-        canStream = data.canStream;
+    peers[viewerId] = peer;
+  }
 
-        socket.emit("login", username);
-
-        document.getElementById("loginDiv").style.display = "none";
-        document.getElementById("registerDiv").style.display = "none";
-        document.getElementById("appDiv").style.display = "block";
-
-        if (canStream) {
-          document.getElementById("changeStreamBtn").style.display = "inline-block";
-          await startStreamer();
-          addChat(`Welcome, ${username}! You can stream now.`);
-        } else {
-          addChat(`You joined the chat as ${username}.`);
-        }
-      } catch (err) {
-        console.error(err);
-        alert("An error occurred during login.");
+  // ===== VIEWER =====
+  socket.on('streamer-available', async (streamerSocketId) => {
+    currentStreamerId = streamerSocketId;
+    if (!canStream && streamerSocketId) {
+      addChat('Streamer is available, connecting...');
+      await connectToStreamer(streamerSocketId);
+    } else if (!streamerSocketId) {
+      addChat('Streamer disconnected.');
+      if (videoEl.srcObject) {
+        videoEl.srcObject.getTracks().forEach(track => track.stop());
+        videoEl.srcObject = null;
       }
     }
+  });
 
-    async function register() {
-      const username = document.getElementById("regUsername").value.trim();
-      const email = document.getElementById("regEmail").value.trim();
-      const password = document.getElementById("regPassword").value;
-      if (!username || !email || !password) {
-        alert("Please fill all registration fields.");
-        return;
-      }
-      try {
-        const res = await fetch("/api/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, email, password })
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          alert(data.error || "Registration failed");
-          return;
-        }
-        alert("Registration successful! Please login.");
-        showLogin();
-      } catch (err) {
-        console.error(err);
-        alert("An error occurred during registration.");
-      }
+  async function connectToStreamer(streamerId) {
+    if (viewerPeer) {
+      viewerPeer.close();
+      viewerPeer = null;
     }
 
-    let localStream = null;
-
-    async function getStream(source = "screen") {
-      if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-      }
-      try {
-        if (source === "screen") {
-          localStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 }
-          });
-        } else {
-          localStream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 }
-          });
-        }
-        const video = document.getElementById("localVideo");
-        video.srcObject = localStream;
-        video.muted = true;
-        await video.play();
-      } catch (err) {
-        console.error("Error getting stream:", err);
-        alert("Failed to access stream.");
-      }
-    }
-
-    async function startStreamer() {
-      await getStream();
-      socket.on("new-viewer", viewerId => {
-        console.log("New viewer connected:", viewerId);
-        const peer = new RTCPeerConnection(iceConfig);
-        localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
-        peer.onicecandidate = e => {
-          if (e.candidate) {
-            socket.emit("signal", { to: viewerId, from: socket.id, data: { candidate: e.candidate } });
-          }
-        };
-        peer.createOffer()
-          .then(offer => peer.setLocalDescription(offer))
-          .then(() => {
-            socket.emit("signal", { to: viewerId, from: socket.id, data: { offer: peer.localDescription } });
-          });
-        peers[viewerId] = peer;
-      });
-    }
-
-    async function changeStream() {
-      const type = prompt("Enter 'screen' or 'camera' to switch stream:");
-      if (!["screen", "camera"].includes(type)) return;
-      await getStream(type);
-      Object.values(peers).forEach(peer => {
-        localStream.getTracks().forEach(newTrack => {
-          const sender = peer.getSenders().find(s => s.track.kind === newTrack.kind);
-          if (sender) sender.replaceTrack(newTrack);
-        });
-      });
-    }
-
-    function goFullscreen() {
-      enterFullscreen();
-    }
-
-    function enterFullscreen() {
-      const el = document.getElementById("localVideo");
-      if (el.requestFullscreen) el.requestFullscreen();
-      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-      else if (el.msRequestFullscreen) el.msRequestFullscreen();
-      else if (el.mozRequestFullScreen) el.mozRequestFullScreen();
-    }
-
-    function toggleDarkMode() {
-      document.body.classList.toggle("dark-mode");
-    }
-
-    function sendMsg() {
-      const msgInput = document.getElementById("msgInput");
-      const msg = msgInput.value.trim();
-      if (!msg) return;
-      socket.emit("chat message", msg);
-      msgInput.value = "";
-    }
-
-    function addChat(msg) {
-      const chatDiv = document.getElementById("chat");
-      const p = document.createElement("p");
-      p.textContent = msg;
-      chatDiv.appendChild(p);
-      chatDiv.scrollTop = chatDiv.scrollHeight;
-    }
-
-    // Viewer logic
-
-    socket.on("streamer-available", async (streamerSocketId) => {
-      streamerId = streamerSocketId;
-      console.log("Streamer available:", streamerId);
-      if (!canStream && streamerId) {
-        await setupViewerConnection(streamerId);
-      }
+    viewerPeer = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
-    const viewerPeerConnections = {};
-
-    async function setupViewerConnection(streamerSocketId) {
-      if (viewerPeerConnections[streamerSocketId]) {
-        return; // Already connected
+    viewerPeer.ontrack = (event) => {
+      console.log('Received remote track');
+      if (videoEl.srcObject !== event.streams[0]) {
+        videoEl.srcObject = event.streams[0];
+        videoEl.muted = false;
+        videoEl.play();
+        addChat('Streaming started');
       }
+    };
 
-      const peer = new RTCPeerConnection(iceConfig);
+    viewerPeer.onicecandidate = (e) => {
+      if (e.candidate) {
+        socket.emit('signal', { to: streamerId, from: socket.id, data: { candidate: e.candidate } });
+      }
+    };
 
-      peer.ontrack = (event) => {
-        console.log("Received remote track");
-        const remoteVideo = document.getElementById("localVideo");
-        if (remoteVideo.srcObject !== event.streams[0]) {
-          remoteVideo.srcObject = event.streams[0];
-          remoteVideo.muted = false;
-          remoteVideo.play();
+    // Listen for signaling messages from streamer
+    socket.off('signal'); // Remove old handlers to prevent duplicates
+    socket.on('signal', async ({ from, data }) => {
+      if (from !== streamerId) return; // Only accept signals from current streamer
+
+      if (data.offer) {
+        // Usually viewer does not receive offer, streamer sends offer
+        console.warn("Unexpected offer at viewer");
+      } else if (data.answer) {
+        await viewerPeer.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else if (data.candidate) {
+        try {
+          await viewerPeer.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+          console.error('Error adding ICE candidate', e);
         }
-      };
+      }
+    });
+  }
 
-      peer.onicecandidate = (e) => {
-        if (e.candidate) {
-          socket.emit("signal", { to: streamerSocketId, from: socket.id, data: { candidate: e.candidate } });
-        }
-      };
+  // ===== SIGNAL HANDLING FOR STREAMER =====
+  socket.on('signal', async ({ from, data }) => {
+    // Streamer receives answer and ICE candidates from viewers
+    if (!canStream) return; // viewer does not handle here
 
-      viewerPeerConnections[streamerSocketId] = peer;
-
-      socket.on("signal", async ({ from, data }) => {
-        if (from !== streamerSocketId) return;
-
-        if (data.answer) {
-          await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-        } else if (data.offer) {
-          await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
-          const answer = await peer.createAnswer();
-          await peer.setLocalDescription(answer);
-          socket.emit("signal", { to: from, from: socket.id, data: { answer: peer.localDescription } });
-        } else if (data.candidate) {
-          try {
-            await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-          } catch (e) {
-            console.error("Error adding ICE candidate", e);
-          }
-        }
-      });
+    const peer = peers[from];
+    if (!peer) {
+      console.warn("No peer connection for viewer", from);
+      return;
     }
 
-    // General chat message listener
-    socket.on("chat message", (msg) => {
-      addChat(msg);
-    });
-
-    // Log connection errors
-    socket.on("connect_error", (err) => {
-      console.error("Socket.IO connection error:", err);
-      alert("Socket connection error.");
-    });
-  </script>
+    if (data.answer) {
+      await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+    } else if (data.candidate) {
+      try {
+        await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+      } catch (e) {
+        console.error('Error adding ICE candidate to streamer peer', e);
+      }
+    }
+  });
+</script>
 
 </body>
 </html>
