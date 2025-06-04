@@ -96,6 +96,8 @@
   <div id="appDiv" style="display:none;">
     <video id="localVideo" autoplay playsinline></video>
     <button onclick="goFullscreen()">Fullscreen</button>
+    <!-- Change Stream Source button, initially hidden -->
+    <button id="changeStreamBtn" style="display:none;" onclick="changeStream()">Change Stream Source</button>
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
     <button onclick="sendMsg()">Send</button>
@@ -155,6 +157,9 @@
         if (canStream) {
           startStreamer();
           addChat(`Welcome, ${username}! You can stream now.`);
+          if (username === "VanellopeVonSchweetz") {
+            document.getElementById("changeStreamBtn").style.display = "inline-block";
+          }
         } else {
           addChat(`You joined the chat as ${username}. Streaming is only allowed for VanellopeVonSchweetz.`);
           startViewer();
@@ -192,28 +197,27 @@
       }
     }
 
+    let currentStream = null;
+
     async function startStreamer() {
       const localVideo = document.getElementById("localVideo");
       try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
+        currentStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-            sampleRate: 48000,
-            channelCount: 2
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 48000
           }
         });
-
-        localVideo.srcObject = stream;
+        localVideo.srcObject = currentStream;
         localVideo.muted = true;
 
         socket.on("new-viewer", viewerId => {
           console.log("[streamer] New viewer:", viewerId);
           const peer = new RTCPeerConnection(iceConfig);
 
-          stream.getTracks().forEach(track => peer.addTrack(track, stream));
+          currentStream.getTracks().forEach(track => peer.addTrack(track, currentStream));
 
           peer.onicecandidate = e => {
             if (e.candidate) {
@@ -239,6 +243,49 @@
       } catch (err) {
         console.error("Error getting display media:", err);
         alert("Could not start streaming. Make sure to allow screen and audio capture.");
+      }
+    }
+
+    async function changeStream() {
+      const localVideo = document.getElementById("localVideo");
+      try {
+        const newStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 48000
+          }
+        });
+
+        // Replace tracks on all peers
+        for (const peerId in peers) {
+          const peer = peers[peerId];
+
+          // Replace video track
+          const senderVideo = peer.getSenders().find(s => s.track.kind === "video");
+          if (senderVideo) {
+            const newVideoTrack = newStream.getVideoTracks()[0];
+            senderVideo.replaceTrack(newVideoTrack);
+          }
+
+          // Replace audio track
+          const senderAudio = peer.getSenders().find(s => s.track.kind === "audio");
+          if (senderAudio) {
+            const newAudioTrack = newStream.getAudioTracks()[0];
+            senderAudio.replaceTrack(newAudioTrack);
+          }
+        }
+
+        // Stop old tracks
+        if (currentStream) {
+          currentStream.getTracks().forEach(track => track.stop());
+        }
+        currentStream = newStream;
+        localVideo.srcObject = currentStream;
+      } catch (err) {
+        console.error("Error changing stream:", err);
+        alert("Could not change stream. Make sure to allow screen and audio capture.");
       }
     }
 
@@ -368,6 +415,7 @@
     window.sendMsg = sendMsg;
     window.goFullscreen = goFullscreen;
     window.toggleDarkMode = toggleDarkMode;
+    window.changeStream = changeStream;
   </script>
 </body>
 </html>
