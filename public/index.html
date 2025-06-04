@@ -70,13 +70,15 @@
     body.dark-mode a {
       color: #90caf9;
     }
+    .button-container {
+      display: flex;
+      justify-content: space-between;
+    }
   </style>
 </head>
 <body class="dark-mode">
 
   <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
-
-  <button id="changeStreamButton" onclick="changeStream()" style="display:none;">Change Stream</button>
 
   <div id="loginDiv">
     <h2>Login</h2>
@@ -96,8 +98,11 @@
   </div>
 
   <div id="appDiv" style="display:none;">
+    <div class="button-container">
+      <button onclick="goFullscreen()">Fullscreen</button>
+      <button id="changeStreamButton" onclick="changeStream()" style="display:none;">Change Stream</button>
+    </div>
     <video id="localVideo" autoplay playsinline></video>
-    <button onclick="goFullscreen()">Fullscreen</button>
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
     <button onclick="sendMsg()">Send</button>
@@ -110,6 +115,7 @@
     let canStream = false;
     const peers = {};
     let streamerId = null;
+    let currentStream = null; // Track the current stream
 
     const iceServers = [
       { urls: "stun:stun.l.google.com:19302" },
@@ -151,7 +157,7 @@
         document.getElementById("appDiv").style.display = "block";
 
         if (canStream) {
-          document.getElementById("changeStreamButton").style.display = "block";
+          document.getElementById("changeStreamButton").style.display = "inline-block";
           startWebRTC();
           addChat(`Welcome, ${username}! You can stream now.`);
         } else {
@@ -182,6 +188,7 @@
           }
         }).then(stream => {
           localVideo.srcObject = stream;
+          currentStream = stream; // Store the current stream
 
           socket.on("new-viewer", (viewerId) => {
             const peer = new RTCPeerConnection({ iceServers });
@@ -300,16 +307,31 @@
     }
 
     function changeStream() {
-      alert("Change Stream functionality goes here.");
-    }
+      const newStreamUrl = prompt("Enter the new stream URL (webpage URL):");
+      if (!newStreamUrl) return;
 
-    socket.on("chat message", (msg) => {
-      const chat = document.getElementById("chat");
-      const div = document.createElement("div");
-      div.textContent = msg;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-    });
+      // Stop the current stream
+      if (currentStream) {
+        const tracks = currentStream.getTracks();
+        tracks.forEach(track => track.stop());
+      }
+
+      // Start a new stream with the provided URL (you would replace this with actual logic to stream a webpage)
+      alert(`Starting new stream with URL: ${newStreamUrl}`);
+
+      // Re-initialize the stream with the new source
+      navigator.mediaDevices.getDisplayMedia({
+        video: {
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 60, max: 60 }
+        }
+      }).then(newStream => {
+        const localVideo = document.getElementById("localVideo");
+        localVideo.srcObject = newStream;
+        currentStream = newStream;
+      });
+    }
 
     function addChat(message) {
       const chat = document.getElementById("chat");
