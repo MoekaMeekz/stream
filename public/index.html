@@ -94,7 +94,8 @@
   </div>
 
   <div id="appDiv" style="display:none;">
-    <video id="localVideo" autoplay muted playsinline></video>
+    <!-- Streamer: muted local preview; Viewer: unmuted -->
+    <video id="localVideo" autoplay playsinline></video>
     <button onclick="goFullscreen()">Fullscreen</button>
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
@@ -139,13 +140,12 @@
         document.getElementById("loginDiv").style.display = "none";
         document.getElementById("appDiv").style.display = "block";
 
+        startWebRTC();
+
         if (canStream) {
-          startWebRTC();
           addChat(`Welcome, ${username}! You can stream now.`);
         } else {
           addChat(`You joined the chat as ${username}. Streaming is only allowed for VanellopeVonSchweetz.`);
-          streamerId = null; // Will be set when signaling starts
-          startWebRTC();
         }
       } catch (err) {
         console.error(err);
@@ -153,56 +153,67 @@
       }
     }
 
-    function startWebRTC() {
+    async function startWebRTC() {
       const localVideo = document.getElementById("localVideo");
 
       if (canStream) {
-        navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-          .then(stream => {
-            localVideo.srcObject = stream;
-
-            socket.on("new-viewer", (viewerId) => {
-              const peer = new RTCPeerConnection();
-
-              // Add all tracks to peer connection (audio + video)
-              stream.getTracks().forEach(track => peer.addTrack(track, stream));
-
-              peer.onicecandidate = e => {
-                if (e.candidate) {
-                  socket.emit("signal", {
-                    to: viewerId,
-                    from: socket.id,
-                    data: { candidate: e.candidate }
-                  });
-                }
-              };
-
-              peer.createOffer()
-                .then(offer => peer.setLocalDescription(offer))
-                .then(() => {
-                  socket.emit("signal", {
-                    to: viewerId,
-                    from: socket.id,
-                    data: { offer: peer.localDescription }
-                  });
-                });
-
-              peers[viewerId] = peer;
-            });
-          })
-          .catch(err => {
-            alert("Could not get display media: " + err.message);
+        // Streamer: capture screen with audio
+        try {
+          const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: { 
+              // Important for capturing system audio
+              mandatory: {
+                chromeMediaSource: 'desktop'
+              }
+            }
           });
 
+          // Show local preview muted to avoid echo
+          localVideo.srcObject = stream;
+          localVideo.muted = false;
+
+          socket.on("new-viewer", viewerId => {
+            const peer = new RTCPeerConnection();
+
+            // Add all tracks (audio+video) to peer
+            stream.getTracks().forEach(track => peer.addTrack(track, stream));
+
+            peer.onicecandidate = e => {
+              if (e.candidate) {
+                socket.emit("signal", {
+                  to: viewerId,
+                  from: socket.id,
+                  data: { candidate: e.candidate }
+                });
+              }
+            };
+
+            peer.createOffer()
+              .then(offer => peer.setLocalDescription(offer))
+              .then(() => {
+                socket.emit("signal", {
+                  to: viewerId,
+                  from: socket.id,
+                  data: { offer: peer.localDescription }
+                });
+              });
+
+            peers[viewerId] = peer;
+          });
+        } catch (err) {
+          alert("Error accessing display media: " + err.message);
+        }
       } else {
-        // Viewer side
+        // Viewer: receive stream
         const remoteStream = new MediaStream();
         localVideo.srcObject = remoteStream;
+        localVideo.muted = false; // Important: viewer audio should NOT be muted
 
         const peer = new RTCPeerConnection();
 
-        peer.ontrack = (event) => {
-          // Add all tracks to the remoteStream (audio + video)
+        peer.ontrack = event => {
+          // Add all tracks from the stream (audio + video)
           event.streams[0].getTracks().forEach(track => {
             remoteStream.addTrack(track);
           });
@@ -223,13 +234,13 @@
 
       socket.on("signal", async ({ from, data }) => {
         if (!peers[from]) {
-          // Create new peer connection for incoming signaling
           const peer = new RTCPeerConnection();
 
           const remoteStream = new MediaStream();
           document.getElementById("localVideo").srcObject = remoteStream;
+          document.getElementById("localVideo").muted = false; // viewer audio not muted
 
-          peer.ontrack = (event) => {
+          peer.ontrack = event => {
             event.streams[0].getTracks().forEach(track => {
               remoteStream.addTrack(track);
             });
