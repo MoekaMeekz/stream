@@ -119,11 +119,6 @@
       }
     ];
 
-    // Check if dark mode was previously enabled
-    if (localStorage.getItem('darkMode') === 'enabled') {
-      document.body.classList.add("dark-mode");
-    }
-
     async function login() {
       const email = document.getElementById("emailInput").value.trim();
       const password = document.getElementById("passwordInput").value.trim();
@@ -168,6 +163,32 @@
       } catch (err) {
         console.error(err);
         alert("An error occurred during login.");
+      }
+    }
+
+    function changeStream() {
+      if (username === "VanellopeVonSchweetz") {
+        navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 60, max: 60 }
+          },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            sampleRate: 48000
+          }
+        }).then(stream => {
+          const localVideo = document.getElementById("localVideo");
+          localVideo.srcObject = stream;
+          addChat("You changed the stream.");
+        }).catch(err => {
+          alert("Error accessing display media: " + err.message);
+          console.error(err);
+        });
+      } else {
+        addChat("Only VanellopeVonSchweetz can change the stream.");
       }
     }
 
@@ -286,9 +307,9 @@
       if (video.requestFullscreen) {
         video.requestFullscreen();
       } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen();
+        video.webkitRequestFullscreen(); // Safari
       } else if (video.msRequestFullscreen) {
-        video.msRequestFullscreen();
+        video.msRequestFullscreen(); // IE11
       }
     }
 
