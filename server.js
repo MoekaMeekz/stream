@@ -1,4 +1,3 @@
-
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -21,6 +20,8 @@ app.use(express.json());
 const allowedStreamer = "VanellopeVonSchweetz";
 const users = new Map();
 
+let currentStreamerId = null;
+
 io.on("connection", (socket) => {
   let username = "";
 
@@ -29,7 +30,18 @@ io.on("connection", (socket) => {
     users.set(socket.id, username);
     console.log(`${username} connected`);
     socket.broadcast.emit("chat message", `${username} joined the chat`);
-    socket.broadcast.emit("new-viewer", socket.id); // notify streamer
+
+    // If this user is the allowed streamer, set them as the current streamer and notify others
+    if (username === allowedStreamer) {
+      currentStreamerId = socket.id;
+      socket.broadcast.emit("streamer-available", currentStreamerId);
+      console.log(`Streamer available: ${currentStreamerId}`);
+    } else {
+      // Notify streamer that a new viewer joined (if streamer exists)
+      if (currentStreamerId) {
+        io.to(currentStreamerId).emit("new-viewer", socket.id);
+      }
+    }
   });
 
   socket.on("chat message", (msg) => {
@@ -43,11 +55,28 @@ io.on("connection", (socket) => {
     io.to(to).emit("signal", { from, data });
   });
 
+  socket.on("viewer-disconnected", (viewerId) => {
+    if (currentStreamerId) {
+      io.to(currentStreamerId).emit("viewer-disconnected", viewerId);
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log(`${username} disconnected`);
     users.delete(socket.id);
     socket.broadcast.emit("chat message", `${username} left the chat`);
-    socket.broadcast.emit("viewer-disconnected", socket.id);
+
+    // If streamer disconnected, clear currentStreamerId and notify others
+    if (socket.id === currentStreamerId) {
+      currentStreamerId = null;
+      socket.broadcast.emit("streamer-available", null);
+      console.log("Streamer disconnected, clearing streamerId");
+    } else {
+      // Notify streamer if viewer disconnected
+      if (currentStreamerId) {
+        io.to(currentStreamerId).emit("viewer-disconnected", socket.id);
+      }
+    }
   });
 });
 
