@@ -1,4 +1,3 @@
-
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -28,14 +27,19 @@ io.on("connection", (socket) => {
     username = name;
     users.set(socket.id, username);
     console.log(`${username} connected`);
-    socket.broadcast.emit("chat message", `${username} joined the chat`);
+
+    // Send system join message as structured object
+    socket.broadcast.emit("chat message", {
+      username: "System",
+      msg: `${username} joined the chat`,
+    });
+
     socket.broadcast.emit("new-viewer", socket.id); // notify streamer
   });
 
   socket.on("chat message", (msg) => {
     if (username) {
-      const formattedMsg = `${username}: ${msg}`;
-      io.emit("chat message", formattedMsg);
+      io.emit("chat message", { username, msg }); // ✅ Send structured object
     }
   });
 
@@ -46,7 +50,13 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log(`${username} disconnected`);
     users.delete(socket.id);
-    socket.broadcast.emit("chat message", `${username} left the chat`);
+
+    // Send system leave message as structured object
+    socket.broadcast.emit("chat message", {
+      username: "System",
+      msg: `${username} left the chat`,
+    });
+
     socket.broadcast.emit("viewer-disconnected", socket.id);
   });
 });
