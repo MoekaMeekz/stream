@@ -198,11 +198,14 @@
         const stream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            sampleRate: 48000
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            sampleRate: 48000,
+            channelCount: 2
           }
         });
+
         localVideo.srcObject = stream;
         localVideo.muted = true;
 
