@@ -195,7 +195,14 @@
     async function startStreamer() {
       const localVideo = document.getElementById("localVideo");
       try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 48000
+          }
+        });
         localVideo.srcObject = stream;
         localVideo.muted = true;
 
