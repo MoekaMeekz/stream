@@ -152,14 +152,9 @@
         document.getElementById("registerDiv").style.display = "none";
         document.getElementById("appDiv").style.display = "block";
 
-        // 👉 Fullscreen trigger for mobile on login
-        if (/Mobi|Android/i.test(navigator.userAgent)) {
-          setTimeout(() => enterFullscreen(), 500);
-        }
-
         if (canStream) {
           document.getElementById("changeStreamBtn").style.display = "inline-block";
-          startStreamer();
+          await startStreamer();
           addChat(`Welcome, ${username}! You can stream now.`);
         } else {
           addChat(`You joined the chat as ${username}.`);
@@ -215,21 +210,10 @@
             audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 48000 }
           });
         }
-
-        if (!localStream.getVideoTracks().length) {
-          alert("No video track available in the stream!");
-          return;
-        }
-
         const video = document.getElementById("localVideo");
         video.srcObject = localStream;
         video.muted = true;
         await video.play();
-
-        // 👉 Try fullscreen again on mobile
-        if (/Mobi|Android/i.test(navigator.userAgent)) {
-          setTimeout(() => enterFullscreen(), 500);
-        }
       } catch (err) {
         console.error("Error getting stream:", err);
         alert("Failed to access stream.");
@@ -239,6 +223,7 @@
     async function startStreamer() {
       await getStream();
       socket.on("new-viewer", viewerId => {
+        console.log("New viewer connected:", viewerId);
         const peer = new RTCPeerConnection(iceConfig);
         localStream.getTracks().forEach(track => peer.addTrack(track, localStream));
         peer.onicecandidate = e => {
@@ -272,7 +257,7 @@
     }
 
     function enterFullscreen() {
-      const el = document.getElementById("localVideo"); // Or document.documentElement
+      const el = document.getElementById("localVideo");
       if (el.requestFullscreen) el.requestFullscreen();
       else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
       else if (el.msRequestFullscreen) el.msRequestFullscreen();
@@ -288,85 +273,85 @@
       const msg = msgInput.value.trim();
       if (!msg) return;
       socket.emit("chat message", msg);
-      addChat(`You: ${msg}`);
       msgInput.value = "";
     }
 
-    socket.on("chat message", msg => addChat(msg));
+    function addChat(msg) {
+      const chatDiv = document.getElementById("chat");
+      const p = document.createElement("p");
+      p.textContent = msg;
+      chatDiv.appendChild(p);
+      chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
 
-    socket.on("signal", async ({ from, data }) => {
-      if (!canStream && !streamerId) {
-        streamerId = from;
-        startViewer();
+    // Viewer logic
+
+    socket.on("streamer-available", async (streamerSocketId) => {
+      streamerId = streamerSocketId;
+      console.log("Streamer available:", streamerId);
+      if (!canStream && streamerId) {
+        await setupViewerConnection(streamerId);
+      }
+    });
+
+    const viewerPeerConnections = {};
+
+    async function setupViewerConnection(streamerSocketId) {
+      if (viewerPeerConnections[streamerSocketId]) {
+        return; // Already connected
       }
 
-      let peer = peers[from];
+      const peer = new RTCPeerConnection(iceConfig);
 
-      if (!peer) {
-        peer = new RTCPeerConnection(iceConfig);
+      peer.ontrack = (event) => {
+        console.log("Received remote track");
+        const remoteVideo = document.getElementById("localVideo");
+        if (remoteVideo.srcObject !== event.streams[0]) {
+          remoteVideo.srcObject = event.streams[0];
+          remoteVideo.muted = false;
+          remoteVideo.play();
+        }
+      };
 
-        const remoteStream = new MediaStream();
-        peers[from] = peer;
+      peer.onicecandidate = (e) => {
+        if (e.candidate) {
+          socket.emit("signal", { to: streamerSocketId, from: socket.id, data: { candidate: e.candidate } });
+        }
+      };
 
-        const video = document.getElementById("localVideo");
-        video.srcObject = remoteStream;
-        video.muted = false;  // Viewer must NOT mute video
+      viewerPeerConnections[streamerSocketId] = peer;
 
-        peer.ontrack = (event) => {
-          event.streams[0].getTracks().forEach(track => {
-            remoteStream.addTrack(track);
-          });
-        };
+      socket.on("signal", async ({ from, data }) => {
+        if (from !== streamerSocketId) return;
 
-        peer.onicecandidate = (e) => {
-          if (e.candidate) {
-            socket.emit("signal", { to: from, from: socket.id, data: { candidate: e.candidate } });
-          }
-        };
-
-        // Try to play video for iOS devices which may block autoplay
-        video.play().catch(() => {
-          console.log("User interaction required to play video");
-        });
-      }
-
-      try {
-        if (data.offer) {
+        if (data.answer) {
+          await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } else if (data.offer) {
           await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
           socket.emit("signal", { to: from, from: socket.id, data: { answer: peer.localDescription } });
-        } else if (data.answer) {
-          await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
         } else if (data.candidate) {
-          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+          try {
+            await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+          } catch (e) {
+            console.error("Error adding ICE candidate", e);
+          }
         }
-      } catch (err) {
-        console.error("Signal error:", err);
-      }
-    });
-
-    socket.on("viewer-disconnected", id => {
-      if (peers[id]) {
-        peers[id].close();
-        delete peers[id];
-      }
-    });
-
-    // Viewer: setup any additional logic here if needed
-    function startViewer() {
-      // no local stream for viewer, just waiting for remote stream
-      addChat("Viewing stream...");
+      });
     }
 
-    window.login = login;
-    window.register = register;
-    window.showRegister = showRegister;
-    window.showLogin = showLogin;
-    window.sendMsg = sendMsg;
-    window.goFullscreen = goFullscreen;
-    window.toggleDarkMode = toggleDarkMode;
-    window.changeStream = changeStream;
+    // General chat message listener
+    socket.on("chat message", (msg) => {
+      addChat(msg);
+    });
+
+    // Log connection errors
+    socket.on("connect_error", (err) => {
+      console.error("Socket.IO connection error:", err);
+      alert("Socket connection error.");
+    });
   </script>
+
 </body>
 </html>
