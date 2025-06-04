@@ -115,7 +115,7 @@
     let canStream = false;
     const peers = {};
     let streamerId = null;
-    let currentStream = null; // Track the current stream
+    let currentStream = null;
 
     const iceServers = [
       { urls: "stun:stun.l.google.com:19302" },
@@ -188,7 +188,7 @@
           }
         }).then(stream => {
           localVideo.srcObject = stream;
-          currentStream = stream; // Store the current stream
+          currentStream = stream;
 
           socket.on("new-viewer", (viewerId) => {
             const peer = new RTCPeerConnection({ iceServers });
@@ -287,9 +287,9 @@
       if (video.requestFullscreen) {
         video.requestFullscreen();
       } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen();
+        video.webkitRequestFullscreen(); // Safari
       } else if (video.msRequestFullscreen) {
-        video.msRequestFullscreen();
+        video.msRequestFullscreen(); // IE11
       }
     }
 
@@ -307,19 +307,6 @@
     }
 
     function changeStream() {
-      const newStreamUrl = prompt("Enter the new stream URL (webpage URL):");
-      if (!newStreamUrl) return;
-
-      // Stop the current stream
-      if (currentStream) {
-        const tracks = currentStream.getTracks();
-        tracks.forEach(track => track.stop());
-      }
-
-      // Start a new stream with the provided URL (you would replace this with actual logic to stream a webpage)
-      alert(`Starting new stream with URL: ${newStreamUrl}`);
-
-      // Re-initialize the stream with the new source
       navigator.mediaDevices.getDisplayMedia({
         video: {
           width: { ideal: 1920 },
@@ -330,6 +317,10 @@
         const localVideo = document.getElementById("localVideo");
         localVideo.srcObject = newStream;
         currentStream = newStream;
+        alert("Stream changed!");
+      }).catch(err => {
+        alert("Error selecting new stream: " + err.message);
+        console.error(err);
       });
     }
 
@@ -345,7 +336,6 @@
       document.getElementById("loginDiv").style.display = "none";
       document.getElementById("registerDiv").style.display = "block";
     }
-
     function showLogin() {
       document.getElementById("registerDiv").style.display = "none";
       document.getElementById("loginDiv").style.display = "block";
