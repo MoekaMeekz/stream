@@ -72,9 +72,11 @@
     }
   </style>
 </head>
-<body>
+<body class="dark-mode">
 
   <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
+
+  <button id="changeStreamButton" onclick="changeStream()" style="display:none;">Change Stream</button>
 
   <div id="loginDiv">
     <h2>Login</h2>
@@ -109,7 +111,6 @@
     const peers = {};
     let streamerId = null;
 
-    // ICE server config with Google STUN and public TURN server (replace with your TURN for production)
     const iceServers = [
       { urls: "stun:stun.l.google.com:19302" },
       {
@@ -150,11 +151,12 @@
         document.getElementById("appDiv").style.display = "block";
 
         if (canStream) {
+          document.getElementById("changeStreamButton").style.display = "block";
           startWebRTC();
           addChat(`Welcome, ${username}! You can stream now.`);
         } else {
           addChat(`You joined the chat as ${username}. Streaming is only allowed for VanellopeVonSchweetz.`);
-          streamerId = null; // Will be set on signal receive
+          streamerId = null;
           startWebRTC();
         }
       } catch (err) {
@@ -167,7 +169,6 @@
       const localVideo = document.getElementById("localVideo");
 
       if (canStream) {
-        // Request display media with high quality constraints
         navigator.mediaDevices.getDisplayMedia({
           video: {
             width: { ideal: 1920 },
@@ -211,7 +212,6 @@
           console.error(err);
         });
       } else {
-        // Viewer: prepare to receive stream
         const remoteStream = new MediaStream();
         localVideo.srcObject = remoteStream;
 
@@ -280,9 +280,9 @@
       if (video.requestFullscreen) {
         video.requestFullscreen();
       } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen(); // Safari
+        video.webkitRequestFullscreen();
       } else if (video.msRequestFullscreen) {
-        video.msRequestFullscreen(); // IE11
+        video.msRequestFullscreen();
       }
     }
 
@@ -297,6 +297,10 @@
       socket.emit("chat message", msg);
       addChat(`You: ${msg}`);
       msgInput.value = "";
+    }
+
+    function changeStream() {
+      alert("Change Stream functionality goes here.");
     }
 
     socket.on("chat message", (msg) => {
@@ -315,11 +319,11 @@
       chat.scrollTop = chat.scrollHeight;
     }
 
-    // Helpers for switching between login and register views
     function showRegister() {
       document.getElementById("loginDiv").style.display = "none";
       document.getElementById("registerDiv").style.display = "block";
     }
+
     function showLogin() {
       document.getElementById("registerDiv").style.display = "none";
       document.getElementById("loginDiv").style.display = "block";
@@ -331,6 +335,7 @@
     window.toggleDarkMode = toggleDarkMode;
     window.showRegister = showRegister;
     window.showLogin = showLogin;
+    window.changeStream = changeStream;
   </script>
 </body>
 </html>
