@@ -200,7 +200,11 @@
       if (canStream) {
         try {
           const stream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
+            video: {
+              width: { exact: 1920 },
+              height: { exact: 1080 },
+              frameRate: { max: 60 }
+            },
             audio: {
               echoCancellation: false,
               noiseSuppression: false,
@@ -209,7 +213,7 @@
           });
 
           localVideo.srcObject = stream;
-          localVideo.muted = true; // Mute local preview to avoid feedback
+          localVideo.muted = true; // mute local preview
           localVideo.playsInline = true;
 
           socket.on("new-viewer", viewerId => {
@@ -217,13 +221,23 @@
 
             stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
-            // Increase audio bitrate and stereo on sender
+            // Try to set high bitrate on the senders
             peer.getSenders().forEach(sender => {
-              if (sender.track && sender.track.kind === "audio") {
-                const params = sender.getParameters();
-                if (!params.encodings) params.encodings = [{}];
-                params.encodings[0].maxBitrate = 128000; // 128 kbps for audio
-                sender.setParameters(params).catch(e => console.warn("Audio bitrate error:", e));
+              if (sender.track.kind === 'video') {
+                const parameters = sender.getParameters();
+                if (!parameters.encodings) {
+                  parameters.encodings = [{}];
+                }
+                parameters.encodings[0].maxBitrate = 5_000_000; // 5 Mbps video
+                sender.setParameters(parameters).catch(e => console.warn("SetParameters video failed", e));
+              }
+              if (sender.track.kind === 'audio') {
+                const parameters = sender.getParameters();
+                if (!parameters.encodings) {
+                  parameters.encodings = [{}];
+                }
+                parameters.encodings[0].maxBitrate = 128_000; // 128 kbps audio
+                sender.setParameters(parameters).catch(e => console.warn("SetParameters audio failed", e));
               }
             });
 
@@ -237,15 +251,15 @@
               }
             };
 
-            peer.createOffer()
-              .then(offer => peer.setLocalDescription(offer))
-              .then(() => {
-                socket.emit("signal", {
-                  to: viewerId,
-                  from: socket.id,
-                  data: { offer: peer.localDescription }
-                });
+            peer.createOffer().then(offer => {
+              return peer.setLocalDescription(offer);
+            }).then(() => {
+              socket.emit("signal", {
+                to: viewerId,
+                from: socket.id,
+                data: { offer: peer.localDescription }
               });
+            }).catch(console.error);
 
             peers[viewerId] = peer;
           });
@@ -256,13 +270,13 @@
       } else {
         const remoteStream = new MediaStream();
         localVideo.srcObject = remoteStream;
-        localVideo.muted = false;  // Viewers should hear audio
+        localVideo.muted = false;
+        localVideo.playsInline = true;
 
         const peer = new RTCPeerConnection();
 
-        peer.ontrack = e => {
-          // Add received tracks to remote stream
-          e.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+        peer.ontrack = (e) => {
+          remoteStream.addTrack(e.track);
         };
 
         peer.onicecandidate = e => {
@@ -282,10 +296,13 @@
         if (!peers[from]) {
           const peer = new RTCPeerConnection();
 
-          peer.ontrack = e => {
-            const remoteStream = new MediaStream();
-            e.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
-            document.getElementById("localVideo").srcObject = remoteStream;
+          // For viewers, add remote track(s)
+          peer.ontrack = (e) => {
+            const remoteVideo = document.getElementById("localVideo");
+            if (!remoteVideo.srcObject) {
+              remoteVideo.srcObject = new MediaStream();
+            }
+            remoteVideo.srcObject.addTrack(e.track);
           };
 
           peer.onicecandidate = e => {
@@ -304,15 +321,11 @@
           await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
           const answer = await peer.createAnswer();
           await peer.setLocalDescription(answer);
-          socket.emit("signal", { to: from, from: socket.id, data: { answer } });
+          socket.emit("signal", { to: from, from: socket.id, data: { answer: peer.localDescription } });
         } else if (data.answer) {
           await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
         } else if (data.candidate) {
-          try {
-            await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
-          } catch (e) {
-            console.warn("Error adding ICE candidate:", e);
-          }
+          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
         }
       });
 
@@ -341,36 +354,25 @@
 
     function sendMsg() {
       const msgInput = document.getElementById("msgInput");
-      const msg = msgInput.value;
-      if (!msg.trim()) return;
-      socket.emit("chat message", msg);
-      addChat(`You: ${msg}`);
-      msgInput.value = "";
+      const msg = msgInput.value.trim();
+      if (msg) {
+        socket.emit("chat-message", { user: username, message: msg });
+        addChat(`You: ${msg}`);
+        msgInput.value = "";
+      }
     }
 
-    socket.on("chat message", (msg) => {
+    function addChat(msg) {
       const chat = document.getElementById("chat");
-      const div = document.createElement("div");
-      div.textContent = msg;
-      chat.appendChild(div);
+      const p = document.createElement("p");
+      p.textContent = msg;
+      chat.appendChild(p);
       chat.scrollTop = chat.scrollHeight;
+    }
+
+    socket.on("chat-message", ({ user, message }) => {
+      addChat(`${user}: ${message}`);
     });
-
-    function addChat(message) {
-      const chat = document.getElementById("chat");
-      const div = document.createElement("div");
-      div.textContent = message;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    window.sendMsg = sendMsg;
-    window.login = login;
-    window.register = register;
-    window.showRegister = showRegister;
-    window.showLogin = showLogin;
-    window.goFullscreen = goFullscreen;
-    window.toggleDarkMode = toggleDarkMode;
   </script>
 </body>
 </html>
