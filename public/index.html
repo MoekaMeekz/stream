@@ -70,6 +70,17 @@
     body.dark-mode a {
       color: #90caf9;
     }
+
+    /* Fullscreen fallback style */
+    #localVideo.fullscreen-fallback {
+      position: fixed !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      z-index: 9999 !important;
+      background: black;
+    }
   </style>
 </head>
 <body>
@@ -96,9 +107,7 @@
   <div id="appDiv" style="display:none;">
     <video id="localVideo" autoplay playsinline></video>
     <button onclick="goFullscreen()">Fullscreen</button>
-    <!-- Change Stream Source button, only shown to VanellopeVonSchweetz -->
-    <button id="changeSourceBtn" style="display:none" onclick="changeStreamSource()">Change Stream Source</button>
-
+    <button onclick="exitFullscreenFallback()">Exit Fullscreen</button>
     <div id="chat"></div>
     <input id="msgInput" placeholder="Type message..." />
     <button onclick="sendMsg()">Send</button>
@@ -111,7 +120,6 @@
     let canStream = false;
     let streamerId = null;
     const peers = {};
-    let currentStream = null;
 
     const iceConfig = {
       iceServers: [
@@ -157,9 +165,6 @@
         document.getElementById("appDiv").style.display = "block";
 
         if (canStream) {
-          if (username === "VanellopeVonSchweetz") {
-            document.getElementById("changeSourceBtn").style.display = "inline-block";
-          }
           startStreamer();
           addChat(`Welcome, ${username}! You can stream now.`);
         } else {
@@ -202,22 +207,23 @@
     async function startStreamer() {
       const localVideo = document.getElementById("localVideo");
       try {
-        currentStream = await navigator.mediaDevices.getDisplayMedia({
+        const stream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
           audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            sampleRate: 48000
+            echoCancellation: true,
+            noiseSuppression: true,
+            sampleRate: 48000,
+            channelCount: 2
           }
         });
-        localVideo.srcObject = currentStream;
+        localVideo.srcObject = stream;
         localVideo.muted = true;
 
         socket.on("new-viewer", viewerId => {
           console.log("[streamer] New viewer:", viewerId);
           const peer = new RTCPeerConnection(iceConfig);
 
-          currentStream.getTracks().forEach(track => peer.addTrack(track, currentStream));
+          stream.getTracks().forEach(track => peer.addTrack(track, stream));
 
           peer.onicecandidate = e => {
             if (e.candidate) {
@@ -243,59 +249,6 @@
       } catch (err) {
         console.error("Error getting display media:", err);
         alert("Could not start streaming. Make sure to allow screen and audio capture.");
-      }
-    }
-
-    // Function to change streaming source dynamically
-    async function changeStreamSource() {
-      if (!canStream) return;
-
-      try {
-        const newStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            sampleRate: 48000
-          }
-        });
-
-        const localVideo = document.getElementById("localVideo");
-        localVideo.srcObject = newStream;
-
-        // Replace tracks in all peer connections
-        for (const peerId in peers) {
-          const peer = peers[peerId];
-
-          // Remove old tracks
-          currentStream.getTracks().forEach(track => {
-            const sender = peer.getSenders().find(s => s.track === track);
-            if (sender) peer.removeTrack(sender);
-          });
-
-          // Add new tracks
-          newStream.getTracks().forEach(track => {
-            peer.addTrack(track, newStream);
-          });
-
-          // Create a new offer to renegotiate
-          const offer = await peer.createOffer();
-          await peer.setLocalDescription(offer);
-
-          socket.emit("signal", {
-            to: peerId,
-            from: socket.id,
-            data: { offer: peer.localDescription }
-          });
-        }
-
-        // Stop old tracks and update current stream
-        currentStream.getTracks().forEach(track => track.stop());
-        currentStream = newStream;
-
-      } catch (err) {
-        console.error("Error changing stream source:", err);
-        alert("Could not change stream source. Make sure to allow screen and audio capture.");
       }
     }
 
@@ -378,54 +331,76 @@
       }
     });
 
-    socket.on("viewer-disconnected", id => {
-      if (peers[id]) {
-        peers[id].close();
-        delete peers[id];
-        console.log("[peer] Closed connection with", id);
-      }
+    socket.on("chat-message", ({ user, msg }) => {
+      addChat(`${user}: ${msg}`);
     });
+
+    function sendMsg() {
+      const input = document.getElementById("msgInput");
+      const msg = input.value.trim();
+      if (!msg) return;
+      socket.emit("chat-message", { user: username, msg });
+      addChat(`You: ${msg}`);
+      input.value = "";
+    }
+
+    function addChat(text) {
+      const chat = document.getElementById("chat");
+      const p = document.createElement("p");
+      p.textContent = text;
+      chat.appendChild(p);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    // Fullscreen logic with fallback for mobile
 
     function goFullscreen() {
       const video = document.getElementById("localVideo");
-      if (video.requestFullscreen) video.requestFullscreen();
-      else if (video.webkitRequestFullscreen) video.webkitRequestFullscreen();
-      else if (video.msRequestFullscreen) video.msRequestFullscreen();
+      if (video.requestFullscreen) {
+        video.requestFullscreen().catch(() => {
+          // Fallback on failure
+          video.classList.add("fullscreen-fallback");
+        });
+      } else if (video.webkitRequestFullscreen) {
+        video.webkitRequestFullscreen();
+      } else if (video.msRequestFullscreen) {
+        video.msRequestFullscreen();
+      } else {
+        // No fullscreen API, fallback
+        video.classList.add("fullscreen-fallback");
+      }
     }
+
+    function exitFullscreenFallback() {
+      const video = document.getElementById("localVideo");
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {
+          video.classList.remove("fullscreen-fallback");
+        });
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      } else if (document.msExitFullscreen) {
+        document.msExitFullscreen();
+      } else {
+        video.classList.remove("fullscreen-fallback");
+      }
+    }
+
+    // Dark mode toggle
 
     function toggleDarkMode() {
       document.body.classList.toggle("dark-mode");
     }
 
-    function sendMsg() {
-      const msgInput = document.getElementById("msgInput");
-      const msg = msgInput.value.trim();
-      if (!msg) return;
-      socket.emit("chat message", msg);
-      addChat(`You: ${msg}`);
-      msgInput.value = "";
-    }
-
-    socket.on("chat message", msg => {
-      addChat(msg);
-    });
-
-    function addChat(message) {
-      const chat = document.getElementById("chat");
-      const div = document.createElement("div");
-      div.textContent = message;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-    }
-
+    // Expose functions for buttons
     window.login = login;
     window.register = register;
     window.showRegister = showRegister;
     window.showLogin = showLogin;
     window.sendMsg = sendMsg;
     window.goFullscreen = goFullscreen;
+    window.exitFullscreenFallback = exitFullscreenFallback;
     window.toggleDarkMode = toggleDarkMode;
-    window.changeStreamSource = changeStreamSource;
   </script>
 </body>
 </html>
