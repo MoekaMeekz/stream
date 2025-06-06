@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>iOS Stream Viewer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #000;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    video {
+      width: 100%;
+      height: auto;
+      max-height: 90vh;
+      background-color: #000;
+    }
+    #chat {
+      width: 100%;
+      max-height: 200px;
+      overflow-y: auto;
+      background-color: #111;
+      padding: 10px;
+    }
+    #msgInput {
+      width: 100%;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+    button {
+      margin-top: 5px;
+      padding: 10px 20px;
+    }
+  </style>
+</head>
+<body>
+  <video id="localVideo" autoplay playsinline></video>
+  <div id="chat"></div>
+  <input id="msgInput" placeholder="Type message..." />
+  <button onclick="sendMsg()">Send</button>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const username = "iOS Viewer";
+    const peers = {};
+    const localVideo = document.getElementById("localVideo");
+    const remoteStream = new MediaStream();
+    localVideo.srcObject = remoteStream;
+
+    const iceServers = [
+      { urls: "stun:stun.l.google.com:19302" },
+      {
+        urls: "turn:numb.viagenie.ca",
+        username: "webrtc@live.com",
+        credential: "muazkh"
+      }
+    ];
+
+    socket.emit("login", username);
+
+    const peer = new RTCPeerConnection({ iceServers });
+
+    peer.ontrack = (e) => {
+      e.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+    };
+
+    peer.onicecandidate = e => {
+      if (e.candidate) {
+        socket.emit("signal", {
+          to: streamerId,
+          from: socket.id,
+          data: { candidate: e.candidate }
+        });
+      }
+    };
+
+    let streamerId = null;
+    peers[socket.id] = peer;
+
+    socket.on("signal", async ({ from, data }) => {
+      streamerId = from;
+      if (data.offer) {
+        await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+        socket.emit("signal", { to: from, from: socket.id, data: { answer } });
+      } else if (data.answer) {
+        await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else if (data.candidate) {
+        await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+      }
+    });
+
+    socket.on("chat message", (data) => {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.textContent = `${data.username}: ${data.msg}`;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    });
+
+    function sendMsg() {
+      const msgInput = document.getElementById("msgInput");
+      const msg = msgInput.value.trim();
+      if (!msg) return;
+      socket.emit("chat message", { username, msg });
+      msgInput.value = "";
+    }
+
+    localVideo.addEventListener("click", () => {
+      if (localVideo.requestFullscreen) {
+        localVideo.requestFullscreen();
+      } else if (localVideo.webkitEnterFullscreen) {
+        localVideo.webkitEnterFullscreen();
+      }
+    });
+  </script>
+</body>
+</html>
