@@ -71,6 +71,12 @@
       color: #90caf9;
     }
   </style>
+<script>
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  if (isIOS && window.location.pathname !== '/ios.html') {
+    window.location.href = '/ios.html';
+  }
+</script>
 </head>
 <body>
 
