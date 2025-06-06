@@ -3,57 +3,110 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>iOS Stream Viewer</title>
+  <title>iOS Stream + Chat App</title>
   <style>
     body {
       font-family: Arial, sans-serif;
-      background-color: #000;
-      color: #fff;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
+      max-width: 700px;
+      margin: 20px auto;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    #loginDiv, #registerDiv, #appDiv {
+      border: 1px solid #ccc;
+      padding: 20px;
+      border-radius: 8px;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    input {
+      display: block;
+      margin: 10px 0;
+      padding: 8px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #chat {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 8px;
+      margin-bottom: 10px;
+      background: #f9f9f9;
     }
     video {
       width: 100%;
-      height: auto;
-      max-height: 90vh;
-      background-color: #000;
+      max-height: 300px;
+      background: black;
+      margin-bottom: 10px;
     }
-    #chat {
-      width: 100%;
-      max-height: 200px;
-      overflow-y: auto;
-      background-color: #111;
-      padding: 10px;
-    }
-    #msgInput {
-      width: 100%;
-      padding: 10px;
-      box-sizing: border-box;
+    a {
+      cursor: pointer;
+      color: blue;
     }
     button {
-      margin-top: 5px;
-      padding: 10px 20px;
+      margin: 5px 0;
+    }
+    body.dark-mode {
+      background-color: #121212;
+      color: #eee;
+    }
+    body.dark-mode #loginDiv,
+    body.dark-mode #registerDiv,
+    body.dark-mode #appDiv {
+      background-color: #1e1e1e;
+      color: #eee;
+      border-color: #444;
+    }
+    body.dark-mode input,
+    body.dark-mode #chat,
+    body.dark-mode video {
+      background-color: #2a2a2a;
+      color: #eee;
+      border-color: #555;
+    }
+    body.dark-mode button {
+      background-color: #333;
+      color: #eee;
+    }
+    body.dark-mode a {
+      color: #90caf9;
     }
   </style>
 </head>
 <body>
-  <video id="localVideo" autoplay playsinline></video>
-  <div id="chat"></div>
-  <input id="msgInput" placeholder="Type message..." />
-  <button onclick="sendMsg()">Send</button>
+
+  <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
+
+  <div id="loginDiv">
+    <h2>Login</h2>
+    <input id="emailInput" type="email" placeholder="Email" />
+    <input id="passwordInput" type="password" placeholder="Password" />
+    <button onclick="login()">Login</button>
+    <p>Don't have an account? <a onclick="showRegister()">Register</a></p>
+  </div>
+
+  <div id="registerDiv" style="display:none;">
+    <h2>Register</h2>
+    <input id="regUsername" placeholder="Username" />
+    <input id="regEmail" type="email" placeholder="Email" />
+    <input id="regPassword" type="password" placeholder="Password" />
+    <button onclick="register()">Register</button>
+    <p>Already have an account? <a onclick="showLogin()">Login</a></p>
+  </div>
+
+  <div id="appDiv" style="display:none;">
+    <video id="localVideo" autoplay playsinline controls></video>
+    <div id="chat"></div>
+    <input id="msgInput" placeholder="Type message..." />
+    <button onclick="sendMsg()">Send</button>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
-    const username = "iOS Viewer";
+    let username = "";
+    let canStream = false;
     const peers = {};
-    const localVideo = document.getElementById("localVideo");
-    const remoteStream = new MediaStream();
-    localVideo.srcObject = remoteStream;
+    let streamerId = null;
 
     const iceServers = [
       { urls: "stun:stun.l.google.com:19302" },
@@ -64,40 +117,177 @@
       }
     ];
 
-    socket.emit("login", username);
+    async function login() {
+      const email = document.getElementById("emailInput").value.trim();
+      const password = document.getElementById("passwordInput").value.trim();
 
-    const peer = new RTCPeerConnection({ iceServers });
+      if (!email || !password) {
+        alert("Please enter email and password.");
+        return;
+      }
 
-    peer.ontrack = (e) => {
-      e.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
-    };
-
-    peer.onicecandidate = e => {
-      if (e.candidate) {
-        socket.emit("signal", {
-          to: streamerId,
-          from: socket.id,
-          data: { candidate: e.candidate }
+      try {
+        const res = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
         });
-      }
-    };
 
-    let streamerId = null;
-    peers[socket.id] = peer;
+        const data = await res.json();
 
-    socket.on("signal", async ({ from, data }) => {
-      streamerId = from;
-      if (data.offer) {
-        await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        socket.emit("signal", { to: from, from: socket.id, data: { answer } });
-      } else if (data.answer) {
-        await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
-      } else if (data.candidate) {
-        await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+        if (!res.ok) {
+          alert(data.error || "Login failed");
+          return;
+        }
+
+        username = data.username;
+        canStream = data.canStream;
+
+        socket.emit("login", username);
+
+        document.getElementById("loginDiv").style.display = "none";
+        document.getElementById("appDiv").style.display = "block";
+
+        if (canStream) {
+          startWebRTC();
+          addChat(`Welcome, ${username}! You can stream now.`);
+        } else {
+          addChat(`You joined the chat as ${username}.`);
+          streamerId = null;
+          startWebRTC();
+        }
+      } catch (err) {
+        console.error(err);
+        alert("An error occurred during login.");
       }
-    });
+    }
+
+    function startWebRTC() {
+      const localVideo = document.getElementById("localVideo");
+
+      if (canStream) {
+        navigator.mediaDevices.getDisplayMedia({
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 60, max: 60 }
+          },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            sampleRate: 48000
+          }
+        }).then(stream => {
+          localVideo.srcObject = stream;
+
+          socket.on("new-viewer", (viewerId) => {
+            const peer = new RTCPeerConnection({ iceServers });
+            stream.getTracks().forEach(track => peer.addTrack(track, stream));
+            peer.onicecandidate = e => {
+              if (e.candidate) {
+                socket.emit("signal", {
+                  to: viewerId,
+                  from: socket.id,
+                  data: { candidate: e.candidate }
+                });
+              }
+            };
+
+            peer.createOffer().then(offer => {
+              peer.setLocalDescription(offer);
+              socket.emit("signal", {
+                to: viewerId,
+                from: socket.id,
+                data: { offer }
+              });
+            });
+
+            peers[viewerId] = peer;
+          });
+        }).catch(err => {
+          alert("Error accessing display media: " + err.message);
+          console.error(err);
+        });
+      } else {
+        const remoteStream = new MediaStream();
+        localVideo.srcObject = remoteStream;
+
+        const peer = new RTCPeerConnection({ iceServers });
+
+        peer.ontrack = (e) => {
+          e.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+        };
+
+        peer.onicecandidate = e => {
+          if (e.candidate && streamerId) {
+            socket.emit("signal", {
+              to: streamerId,
+              from: socket.id,
+              data: { candidate: e.candidate }
+            });
+          }
+        };
+
+        peers[socket.id] = peer;
+      }
+
+      socket.on("signal", async ({ from, data }) => {
+        if (!peers[from]) {
+          const peer = new RTCPeerConnection({ iceServers });
+          const remoteStream = new MediaStream();
+          document.getElementById("localVideo").srcObject = remoteStream;
+
+          peer.ontrack = (e) => {
+            e.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+          };
+
+          peer.onicecandidate = e => {
+            if (e.candidate) {
+              socket.emit("signal", { to: from, from: socket.id, data: { candidate: e.candidate } });
+            }
+          };
+          peers[from] = peer;
+          streamerId = from;
+        }
+
+        const peer = peers[from];
+
+        if (data.offer) {
+          await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+          const answer = await peer.createAnswer();
+          await peer.setLocalDescription(answer);
+          socket.emit("signal", { to: from, from: socket.id, data: { answer } });
+        } else if (data.answer) {
+          await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } else if (data.candidate) {
+          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+      });
+
+      socket.on("viewer-disconnected", id => {
+        if (peers[id]) {
+          peers[id].close();
+          delete peers[id];
+        }
+      });
+    }
+
+    function toggleDarkMode() {
+      document.body.classList.toggle("dark-mode");
+      if (document.body.classList.contains("dark-mode")) {
+        localStorage.setItem('darkMode', 'enabled');
+      } else {
+        localStorage.setItem('darkMode', 'disabled');
+      }
+    }
+
+    function sendMsg() {
+      const msgInput = document.getElementById("msgInput");
+      const msg = msgInput.value.trim();
+      if (!msg) return;
+      socket.emit("chat message", msg);
+      msgInput.value = "";
+    }
 
     socket.on("chat message", (data) => {
       const chat = document.getElementById("chat");
@@ -107,21 +297,29 @@
       chat.scrollTop = chat.scrollHeight;
     });
 
-    function sendMsg() {
-      const msgInput = document.getElementById("msgInput");
-      const msg = msgInput.value.trim();
-      if (!msg) return;
-      socket.emit("chat message", { username, msg });
-      msgInput.value = "";
+    function addChat(message) {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.textContent = message;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
     }
 
-    localVideo.addEventListener("click", () => {
-      if (localVideo.requestFullscreen) {
-        localVideo.requestFullscreen();
-      } else if (localVideo.webkitEnterFullscreen) {
-        localVideo.webkitEnterFullscreen();
-      }
-    });
+    function showRegister() {
+      document.getElementById("loginDiv").style.display = "none";
+      document.getElementById("registerDiv").style.display = "block";
+    }
+
+    function showLogin() {
+      document.getElementById("registerDiv").style.display = "none";
+      document.getElementById("loginDiv").style.display = "block";
+    }
+
+    window.login = login;
+    window.sendMsg = sendMsg;
+    window.toggleDarkMode = toggleDarkMode;
+    window.showRegister = showRegister;
+    window.showLogin = showLogin;
   </script>
 </body>
 </html>
