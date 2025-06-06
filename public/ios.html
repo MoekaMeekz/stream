@@ -1,61 +1,290 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>iOS-Compatible Stream</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>iOS Stream Viewer</title>
   <style>
-    body { font-family: sans-serif; max-width: 700px; margin: 2rem auto; }
-    video { width: 100%; max-height: 300px; background: black; margin-bottom: 10px; }
-    button { padding: 10px; margin: 5px; }
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 700px;
+      margin: 20px auto;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    #loginDiv, #registerDiv, #appDiv {
+      border: 1px solid #ccc;
+      padding: 20px;
+      border-radius: 8px;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    input {
+      display: block;
+      margin: 10px 0;
+      padding: 8px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    #chat {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      padding: 8px;
+      margin-bottom: 10px;
+      background: #f9f9f9;
+    }
+    video {
+      width: 100%;
+      max-height: 300px;
+      background: black;
+      margin-bottom: 10px;
+    }
+    a {
+      cursor: pointer;
+      color: blue;
+    }
+    button {
+      margin: 5px 0;
+    }
+    body.dark-mode {
+      background-color: #121212;
+      color: #eee;
+    }
+    body.dark-mode #loginDiv,
+    body.dark-mode #registerDiv,
+    body.dark-mode #appDiv {
+      background-color: #1e1e1e;
+      color: #eee;
+      border-color: #444;
+    }
+    body.dark-mode input,
+    body.dark-mode #chat,
+    body.dark-mode video {
+      background-color: #2a2a2a;
+      color: #eee;
+      border-color: #555;
+    }
+    body.dark-mode button {
+      background-color: #333;
+      color: #eee;
+    }
+    body.dark-mode a {
+      color: #90caf9;
+    }
   </style>
+</head>
+<body>
+
+  <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
+
+  <div id="loginDiv">
+    <h2>Login</h2>
+    <input id="emailInput" type="email" placeholder="Email" />
+    <input id="passwordInput" type="password" placeholder="Password" />
+    <button onclick="login()">Login</button>
+    <p>Don't have an account? <a onclick="showRegister()">Register</a></p>
+  </div>
+
+  <div id="registerDiv" style="display:none;">
+    <h2>Register</h2>
+    <input id="regUsername" placeholder="Username" />
+    <input id="regEmail" type="email" placeholder="Email" />
+    <input id="regPassword" type="password" placeholder="Password" />
+    <button onclick="register()">Register</button>
+    <p>Already have an account? <a onclick="showLogin()">Login</a></p>
+  </div>
+
+  <div id="appDiv" style="display:none;">
+    <video id="localVideo" autoplay playsinline controls></video>
+    <button onclick="goFullscreen()">Fullscreen</button>
+    <div id="chat"></div>
+    <input id="msgInput" placeholder="Type message..." />
+    <button onclick="sendMsg()">Send</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
   <script>
-    const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
-    function getStream() {
-      if (isIOS) {
-        return navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true
+    const socket = io();
+    const peers = {};
+    let streamerId = null;
+
+    async function login() {
+      const email = document.getElementById("emailInput").value.trim();
+      const password = document.getElementById("passwordInput").value.trim();
+
+      if (!email || !password) {
+        alert("Please enter email and password.");
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
         });
-      } else {
-        return navigator.mediaDevices.getDisplayMedia({
-          video: {
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            frameRate: { ideal: 60 }
-          },
-          audio: true
-        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          alert(data.error || "Login failed");
+          return;
+        }
+
+        socket.emit("login", data.username);
+
+        document.getElementById("loginDiv").style.display = "none";
+        document.getElementById("appDiv").style.display = "block";
+        startWebRTC();
+        addChat(`Welcome, ${data.username}!`);
+      } catch (err) {
+        console.error(err);
+        alert("An error occurred during login.");
       }
     }
-    function startStream() {
-      const video = document.getElementById("localVideo");
-      video.muted = true;
-      getStream().then(stream => {
-        video.srcObject = stream;
-        video.play().catch(e => console.warn("Autoplay failed", e));
-      }).catch(err => {
-        console.error("Error getting stream:", err);
-        alert("Stream error: " + err.message);
+
+    async function register() {
+      const username = document.getElementById("regUsername").value.trim();
+      const email = document.getElementById("regEmail").value.trim();
+      const password = document.getElementById("regPassword").value.trim();
+
+      if (!username || !email || !password) {
+        alert("Please fill all fields.");
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, email, password })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          alert(data.error || "Registration failed");
+          return;
+        }
+
+        showLogin();
+        alert("Registration successful. Please log in.");
+      } catch (err) {
+        console.error(err);
+        alert("An error occurred during registration.");
+      }
+    }
+
+    function startWebRTC() {
+      const localVideo = document.getElementById("localVideo");
+      const remoteStream = new MediaStream();
+      localVideo.srcObject = remoteStream;
+
+      const peer = new RTCPeerConnection({
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          {
+            urls: "turn:numb.viagenie.ca",
+            username: "webrtc@live.com",
+            credential: "muazkh"
+          }
+        ]
+      });
+
+      peer.ontrack = (e) => {
+        e.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+      };
+
+      peer.onicecandidate = e => {
+        if (e.candidate && streamerId) {
+          socket.emit("signal", {
+            to: streamerId,
+            from: socket.id,
+            data: { candidate: e.candidate }
+          });
+        }
+      };
+
+      peers[socket.id] = peer;
+
+      socket.on("signal", async ({ from, data }) => {
+        if (!peers[from]) {
+          streamerId = from;
+        }
+
+        const peer = peers[from] || peers[socket.id];
+
+        if (data.offer) {
+          await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+          const answer = await peer.createAnswer();
+          await peer.setLocalDescription(answer);
+          socket.emit("signal", { to: from, from: socket.id, data: { answer } });
+        } else if (data.candidate) {
+          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
       });
     }
+
+    function sendMsg() {
+      const msgInput = document.getElementById("msgInput");
+      const msg = msgInput.value.trim();
+      if (!msg) return;
+      socket.emit("chat message", msg);
+      msgInput.value = "";
+    }
+
+    socket.on("chat message", (data) => {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.textContent = `${data.username}: ${data.msg}`;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    });
+
+    function addChat(message) {
+      const chat = document.getElementById("chat");
+      const div = document.createElement("div");
+      div.textContent = message;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    function showRegister() {
+      document.getElementById("loginDiv").style.display = "none";
+      document.getElementById("registerDiv").style.display = "block";
+    }
+
+    function showLogin() {
+      document.getElementById("registerDiv").style.display = "none";
+      document.getElementById("loginDiv").style.display = "block";
+    }
+
+    function toggleDarkMode() {
+      document.body.classList.toggle("dark-mode");
+      if (document.body.classList.contains("dark-mode")) {
+        localStorage.setItem('darkMode', 'enabled');
+      } else {
+        localStorage.setItem('darkMode', 'disabled');
+      }
+    }
+
     function goFullscreen() {
       const video = document.getElementById("localVideo");
       if (video.requestFullscreen) {
         video.requestFullscreen();
-      } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen();
+      } else if (video.webkitEnterFullscreen) {
+        video.webkitEnterFullscreen();
       } else if (video.msRequestFullscreen) {
         video.msRequestFullscreen();
       }
     }
+
+    window.login = login;
+    window.register = register;
+    window.sendMsg = sendMsg;
+    window.showRegister = showRegister;
+    window.showLogin = showLogin;
+    window.toggleDarkMode = toggleDarkMode;
+    window.goFullscreen = goFullscreen;
   </script>
-</head>
-<body>
-  <h2>Start Streaming</h2>
-  <video id="localVideo" autoplay playsinline muted></video>
-  <br>
-  <button onclick="startStream()">Start Stream</button>
-  <button onclick="goFullscreen()">Fullscreen</button>
 </body>
 </html>
